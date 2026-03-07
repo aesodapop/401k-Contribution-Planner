@@ -653,13 +653,10 @@ function buildDynamicHtml(t) {
       + ' &nbsp; ' + sw2('repeating-linear-gradient(60deg,#e8c96a,#e8c96a 3px,#fff8dc 3px,#fff8dc 6px)') + ' Est. True-Up: ' + f(trueUp) + '</div>'
     : '';
 
-  const customBanner = t.isCustom
-    ? '<div style="margin-bottom:12px;padding:7px 12px;background:#fff8e1;border-left:3px solid #f59e0b;border-radius:7px;font-size:0.75rem;color:#92400e;">Showing custom rates — results below reflect your Explore Different Rates inputs.</div>'
-    : '';
+  
 
   // ── IRS Limit Progress HTML ─────────────────────────────────────────────────
   let limHtml = '<div class="lim-sec">'
-    + customBanner
     + '<div class="section-title">IRS Limit Progress</div>'
     + '<div class="lim-row">'
     +   '<div class="lim-info"><span class="ln">Pre-Tax + Roth</span><span class="lv">' + f(totElec) + ' of ' + f(t.electLim) + '</span></div>'
