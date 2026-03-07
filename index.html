@@ -126,7 +126,9 @@
   .btn:hover{border-color:var(--gold);background:var(--gold-pale);}
   .btn.pri{background:var(--navy);color:white;border-color:var(--navy);}
   .btn.pri:hover{background:var(--navy-light);border-color:var(--gold);}
-  @media(max-width:820px){.layout{grid-template-columns:1fr;}header,.limits-bar{padding-left:20px;padding-right:20px;}.panel-left,.panel-right{padding:20px;}}
+  .whatif-wrap{margin-bottom:22px;}
+  input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+  @media print{.whatif-wrap{display:none!important;}}
   @media print{
     *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
     body{background:white;}
@@ -369,53 +371,43 @@ function calculate() {
   const wantsAll   = goals.has('all');
 
   // ── Determine annual contribution targets ────────────────────────────────────
-  // Targets are FULL-YEAR amounts the participant is trying to reach.
-  // The simulation loop will enforce strict ordering each period.
   let tgtPre = 0, tgtRoth = 0, tgtAT = 0;
 
   if (wantsToday) {
-    // All pre-tax: base first, then pre-tax catch-up
-    tgtPre  = electLim;
-    tgtRoth = 0;
+    tgtPre = electLim; tgtRoth = 0;
   } else if (wantsLater) {
-    // All Roth: roth base first, then roth catch-up
-    tgtPre  = 0;
-    tgtRoth = electLim;
+    tgtPre = 0; tgtRoth = electLim;
   } else if (wantsAll) {
-    // Fill full elective per age strategy, then after-tax
-    if (strat === 'pretax') {
-      tgtPre  = electLim;
-      tgtRoth = 0;
-    } else if (strat === 'roth') {
-      tgtPre  = 0;
-      tgtRoth = electLim;
-    } else {
-      // split: pre-tax gets half of base, roth gets other half of base + all catch-up
-      tgtPre  = L.base / 2;
-      tgtRoth = L.base / 2 + cuAmt;
-    }
-    // After-tax fills 415c room after elective + projected match
-    const projMatch = Math.min(Math.min(tgtPre + tgtRoth, electLim), maxMatch);
-    tgtAT = Math.max(0, annLim - Math.min(tgtPre + tgtRoth, electLim) - projMatch);
+    // Age-based pre/roth split for elective — same strategy as other goals
+    if (strat === 'roth')   { tgtPre = 0;              tgtRoth = electLim; }
+    else if (strat === 'pretax') { tgtPre = electLim;  tgtRoth = 0; }
+    else                    { tgtPre = electLim / 2;   tgtRoth = electLim / 2; }
+    tgtAT = Math.max(0, annLim - electLim - maxMatch);
   } else if (wantsMatch) {
-    // Match-only: 5% of eligible gross, directed per age strategy
     const matchTarget = eligGross * L.matchPct;
     if (strat === 'pretax') { tgtPre = matchTarget; tgtRoth = 0; }
     else if (strat === 'roth') { tgtPre = 0; tgtRoth = matchTarget; }
     else { tgtPre = matchTarget / 2; tgtRoth = matchTarget / 2; }
   }
 
-  // ── Per-period simulation ─────────────────────────────────────────────────
-  // Each period applies STRICT contribution order:
-  //   1. Pre-tax base  (cumPre + cumRoth < L.base)
-  //   2. Pre-tax CU    (cumPre + cumRoth >= L.base, cumPre < tgtPre)
-  //   3. Roth base     (cumPre + cumRoth < L.base after pre-tax, or tgtPre = 0)
-  //   4. Roth CU       (cumPre + cumRoth >= L.base, cumRoth < tgtRoth)
-  //   5. Employer match
-  //   6. After-tax     (only once cumPre + cumRoth >= electLim)
-  //
-  // To keep percentages constant across periods, we spread targets evenly and
-  // let the limit caps naturally shift when buckets are exhausted.
+  // ── Whole-number election rates (ceil) ──────────────────────────────────────
+  // Ceil ensures the participant always meets or slightly exceeds the target.
+  // The plan stops contributions automatically when IRS limits are reached.
+  // One rate per type, set once at the start of the year — no mid-year changes.
+  const remPre  = Math.max(0, tgtPre  - ytdPre);
+  const remRoth = Math.max(0, tgtRoth - ytdRoth);
+  const remAT   = Math.max(0, tgtAT   - ytdAT);
+
+  const dPre  = ppLeft > 0 && ppGross > 0 ? Math.min(75, Math.ceil(remPre  / ppLeft / ppGross * 100)) : 0;
+  const dRoth = ppLeft > 0 && ppGross > 0 ? Math.min(75, Math.ceil(remRoth / ppLeft / ppGross * 100)) : 0;
+  const dAT   = ppLeft > 0 && ppGross > 0 && tgtAT > 0 ? Math.min(75, Math.ceil(remAT / ppLeft / ppGross * 100)) : 0;
+
+  const ppWantPre  = ppGross * dPre  / 100;
+  const ppWantRoth = ppGross * dRoth / 100;
+  const ppWantAT   = ppGross * dAT   / 100;
+
+  // ── Per-period simulation ────────────────────────────────────────────────────
+  // Fixed whole-number elected amounts each period; plan caps at IRS limits.
 
   let cumPre = ytdPre, cumRoth = ytdRoth, cumAT = ytdAT, cumMatch = ytdMatch;
   const rows = [];
@@ -430,59 +422,44 @@ function calculate() {
     const ppNum = ppDone + i;
     let ppPre = 0, ppPreCU = 0, ppRoth = 0, ppRothCU = 0, ppAT = 0, ppMatch = 0;
 
-    // How much of each target remains after YTD
-    const remPre  = Math.max(0, tgtPre  - cumPre);
-    const remRoth = Math.max(0, tgtRoth - cumRoth);
-    const remAT   = Math.max(0, tgtAT   - cumAT);
-    const periodsLeft = ppLeft - i + 1;
-
-    // Per-period portion of remaining targets (spread evenly)
-    const wantPre  = remPre  / periodsLeft;
-    const wantRoth = remRoth / periodsLeft;
-    const wantAT   = remAT   / periodsLeft;
-
-    // Step 1: Pre-tax BASE — only while combined elective < L.base
+    // Step 1: Pre-tax BASE
     const baseRoomForPre = Math.max(0, L.base - cumPre - cumRoth);
-    ppPre = Math.min(wantPre, baseRoomForPre, ppGross);
+    ppPre = Math.min(ppWantPre, baseRoomForPre, Math.max(0, tgtPre - cumPre));
 
-    // Step 2: Pre-tax CATCH-UP — only after combined hits L.base
+    // Step 2: Pre-tax CATCH-UP — activates once combined base is full
     if (isCU && tgtPre > 0) {
-      const cuRoomForPre = Math.max(0, electLim - cumPre - cumRoth - ppPre);
-      // catch-up only activates once base is full
       const baseUsed = cumPre + cumRoth + ppPre;
       if (baseUsed >= L.base - 0.01) {
-        const stillNeedPre = Math.max(0, wantPre - ppPre);
-        ppPreCU = Math.min(stillNeedPre, cuRoomForPre, ppGross - ppPre);
+        const cuRoom    = Math.max(0, electLim - cumPre - cumRoth - ppPre);
+        const stillNeed = Math.max(0, ppWantPre - ppPre);
+        ppPreCU = Math.min(stillNeed, cuRoom, Math.max(0, tgtPre - cumPre - ppPre));
       }
     }
 
     // Step 3: Roth BASE
     const baseRoomForRoth = Math.max(0, L.base - cumPre - cumRoth - ppPre - ppPreCU);
-    ppRoth = Math.min(wantRoth, baseRoomForRoth, ppGross - ppPre - ppPreCU);
+    ppRoth = Math.min(ppWantRoth, baseRoomForRoth, Math.max(0, tgtRoth - cumRoth));
 
-    // Step 4: Roth CATCH-UP — only after combined hits L.base
+    // Step 4: Roth CATCH-UP
     if (isCU && tgtRoth > 0) {
       const baseUsedNow = cumPre + cumRoth + ppPre + ppPreCU + ppRoth;
       if (baseUsedNow >= L.base - 0.01) {
-        const cuRoomForRoth = Math.max(0, electLim - cumPre - cumRoth - ppPre - ppPreCU - ppRoth);
-        const stillNeedRoth = Math.max(0, wantRoth - ppRoth);
-        ppRothCU = Math.min(stillNeedRoth, cuRoomForRoth, ppGross - ppPre - ppPreCU - ppRoth);
+        const cuRoom    = Math.max(0, electLim - cumPre - cumRoth - ppPre - ppPreCU - ppRoth);
+        const stillNeed = Math.max(0, ppWantRoth - ppRoth);
+        ppRothCU = Math.min(stillNeed, cuRoom, Math.max(0, tgtRoth - cumRoth - ppRoth));
       }
     }
 
-    // Step 5: Employer match (dollar-for-dollar up to 5% of eligible gross)
+    // Step 5: Employer match
     const empTotal = ppPre + ppPreCU + ppRoth + ppRothCU;
     ppMatch = Math.min(empTotal, ppElig * L.matchPct);
     ppMatch = Math.min(ppMatch, Math.max(0, maxMatch - cumMatch));
 
-    // Step 6: After-tax — spread evenly across all periods in parallel with elective.
-    // Do NOT wait for elective to be exhausted; instead cap against actual 415(c) room
-    // each period so contributions are smooth and the participant hits the annual limit.
+    // Step 6: After-tax — parallel with elective, capped by 415(c) room
     if (tgtAT > 0) {
       const room415 = Math.max(0, annLim - cumPre - cumRoth - cumAT - cumMatch
                                          - ppPre - ppPreCU - ppRoth - ppRothCU - ppMatch);
-      ppAT = Math.min(wantAT, room415, ppGross - empTotal);
-      ppAT = Math.max(0, ppAT);
+      ppAT = Math.min(ppWantAT, room415, Math.max(0, tgtAT - cumAT));
     }
 
     cumPre   += ppPre + ppPreCU;
@@ -496,66 +473,56 @@ function calculate() {
   }
 
   // ── Year-end totals ──────────────────────────────────────────────────────────
-  const fut       = rows.filter(r => !r.past);
-  const totPre    = ytdPre   + fut.reduce((s,r) => s + r.pre   + r.preCU,  0);
-  const totPreBase= ytdPre   + fut.reduce((s,r) => s + r.pre,              0);
-  const totPreCU  =            fut.reduce((s,r) => s + r.preCU,            0);
-  const totRoth   = ytdRoth  + fut.reduce((s,r) => s + r.roth  + r.rothCU, 0);
-  const totRothBase=ytdRoth  + fut.reduce((s,r) => s + r.roth,             0);
-  const totRothCU =            fut.reduce((s,r) => s + r.rothCU,           0);
-  const totAT     = ytdAT    + fut.reduce((s,r) => s + r.at,               0);
-  const totMatch  = ytdMatch + fut.reduce((s,r) => s + r.match,            0);
-  const totElec   = totPre + totRoth;
-  const grandTot  = totElec + totAT + totMatch;
-
-  // True-up
-  const trueUp = Math.max(0, Math.min(totElec, maxMatch) - totMatch);
-
-  // Display percentages — derive from annual targets for accuracy, floor to whole %, cap at 75.
-  // Using targets (not per-period simulation values) avoids distortion from catch-up mid-year shifts.
-  const dPre  = Math.min(75, Math.floor(tgtPre  / gross * 100));
-  const dRoth = Math.min(75, Math.floor(tgtRoth / gross * 100));
-  const dAT   = Math.min(75, Math.floor(tgtAT   / gross * 100));
+  const fut        = rows.filter(r => !r.past);
+  const totPre     = ytdPre   + fut.reduce((s,r) => s + r.pre   + r.preCU,  0);
+  const totPreBase = ytdPre   + fut.reduce((s,r) => s + r.pre,              0);
+  const totPreCU   =            fut.reduce((s,r) => s + r.preCU,            0);
+  const totRoth    = ytdRoth  + fut.reduce((s,r) => s + r.roth  + r.rothCU, 0);
+  const totRothBase= ytdRoth  + fut.reduce((s,r) => s + r.roth,             0);
+  const totRothCU  =            fut.reduce((s,r) => s + r.rothCU,           0);
+  const totAT      = ytdAT    + fut.reduce((s,r) => s + r.at,               0);
+  const totMatch   = ytdMatch + fut.reduce((s,r) => s + r.match,            0);
+  const totElec    = totPre + totRoth;
+  const grandTot   = totElec + totAT + totMatch;
+  const trueUp     = Math.max(0, Math.min(totElec, maxMatch) - totMatch);
 
   // ── RENDER ───────────────────────────────────────────────────────────────────
   let h = `<div class="res-header"><h2>Your 2026 Contribution Plan</h2></div>`;
 
-  if (isSuper) h += `<div class="alert a-super">⭐ <strong>Super Catch-Up Eligible!</strong> Ages 60–63 get an enhanced catch-up of <strong>$11,250</strong>. Elective limit: <strong>${fmt(electLim)}</strong> · 415(c) limit: <strong>${fmt(annLim)}</strong>.</div>`;
   if (ppLeft === 0) h += `<div class="alert a-warn">⚠️ All 26 pay periods are complete. Your 2026 contributions are finalized.</div>`;
   if (wageCapped) h += `<div class="alert a-warn">⚠️ <strong>IRS Eligible Wage Cap Applied.</strong> Wages entered (${fmt(gross)}) exceed the 2026 §401(a)(17) limit. Match and limit calculations use <strong>${fmt(L.wageCap)}</strong> in eligible compensation.</div>`;
+  if (isSuper) h += `<div class="alert a-super">⭐ <strong>Super Catch-Up Eligible!</strong> Ages 60–63 get an enhanced catch-up of <strong>${fmt(cuAmt)}</strong>. Your elective limit is <strong>${fmt(electLim)}</strong> and 415(c) limit is <strong>${fmt(annLim)}</strong>.</div>`;
+  else if (isCU) h += `<div class="alert a-info" style="background:#f0fdf4;border-left:4px solid #10b981;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:0.82rem;color:#065f46;">✅ <strong>Catch-Up Eligible!</strong> Age 50+ qualifies for an additional <strong>${fmt(cuAmt)}</strong> in catch-up contributions. Your pre-tax + Roth contribution limit is <strong>${fmt(electLim)}</strong>.</div>`;
 
-  // Start period = first future period each type has a non-zero contribution.
-  // fut array is 0-indexed; pay period number = ppDone + index + 1.
-  const firstPreIdx  = fut.findIndex(r => r.pre + r.preCU   > 0.01);
-  const firstRothIdx = fut.findIndex(r => r.roth + r.rothCU > 0.01);
-  const firstATIdx   = fut.findIndex(r => r.at              > 0.01);
-  const startPre  = firstPreIdx  >= 0 ? ppDone + firstPreIdx  + 1 : null;
-  const startRoth = firstRothIdx >= 0 ? ppDone + firstRothIdx + 1 : null;
-  const startAT   = firstATIdx   >= 0 ? ppDone + firstATIdx   + 1 : null;
-
-  // Always include all three types; color matches IRS progress bars
-  const startItems = [
-    { pct: dPre,  label: 'Pre-Tax',   period: startPre,  color: '#1e40af', bg: '#eff6ff', border: '#3b82f6' },
-    { pct: dRoth, label: 'Roth',      period: startRoth, color: '#065f46', bg: '#f0fdf4', border: '#10b981' },
-    { pct: dAT,   label: 'After-Tax', period: startAT,   color: '#6b21a8', bg: '#faf5ff', border: '#a855f7' },
-  ];
+  function elecRowHtml(label, pct, startPP, color, bg, border) {
+    const detail = pct > 0 && startPP
+      ? `Elect <strong style="color:${color};">${pct}%</strong> starting Pay Period <strong style="color:${color};">${startPP}</strong>`
+      : `<span style="color:#bbb;font-style:italic;">0% — no election needed</span>`;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:${bg};border-radius:7px;border-left:3px solid ${border};font-size:0.8rem;">
+      <span style="font-weight:700;color:${color};">${label}</span>
+      <span style="color:var(--muted);">${detail}</span>
+    </div>`;
+  }
 
   const startRowsHtml = `
     <div style="margin-bottom:14px;">
       <div style="display:flex;flex-direction:column;gap:5px;">
-        ${startItems.map(it => `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:${it.bg};border-radius:7px;border-left:3px solid ${it.border};font-size:0.8rem;">
-          <span style="font-weight:700;color:${it.color};">${it.label}</span>
-          ${it.pct > 0 && it.period ? `<span style="color:var(--muted);">Elect <strong style="color:${it.color};">${it.pct}%</strong> starting Pay Period <strong style="color:${it.color};">${it.period}</strong></span>` : `<span style="color:#bbb;font-style:italic;">0% — no election needed</span>`}
-        </div>`).join('')}
+        ${elecRowHtml('Pre-Tax',   dPre,  dPre  > 0 ? ppDone+1 : null, '#1e40af', '#eff6ff', '#3b82f6')}
+        ${elecRowHtml('Roth',      dRoth, dRoth > 0 ? ppDone+1 : null, '#065f46', '#f0fdf4', '#10b981')}
+        ${elecRowHtml('After-Tax', dAT,   dAT   > 0 ? ppDone+1 : null, '#6b21a8', '#faf5ff', '#a855f7')}
       </div>
     </div>`;
 
-  // Rec box contextual note
   let ctxNote = '';
-  if (wantsToday) ctxNote = `Contributing ${dPre}% pre-tax${wantsMatch ? ` covers the 5% needed for your maximum employer match of ${fmt(maxMatch)} and` : ''} fills your elective deferral room${isCU ? `, including $${cuAmt.toLocaleString()} in ${isSuper?'super ':''} catch-up contributions` : ''}.`;
-  else if (wantsLater) ctxNote = `Contributing ${dRoth}% Roth${wantsMatch ? ` covers the 5% needed for your maximum employer match of ${fmt(maxMatch)} and` : ''} fills your elective deferral room${isCU ? `, including $${cuAmt.toLocaleString()} in ${isSuper?'super ':''} catch-up contributions` : ''}.`;
-  else if (wantsAll) ctxNote = `💡 Age-based strategy: ${stratLabel}.${dAT > 0 ? ` An additional ${dAT}% after-tax maximizes your 415(c) annual additions.` : ''}`;
-  else if (wantsMatch) ctxNote = `Contributing ${dPre+dRoth}% per paycheck (${stratLabel.split(' (')[0].toLowerCase()}) secures your full dollar-for-dollar employer match of ${fmt(maxMatch)} for 2026.`;
+  if (wantsToday) ctxNote = `Pre-tax contributions reduce your taxable income today. This plan fills your ${fmt(electLim)} pre-tax + Roth contribution limit for 2026${isCU ? `, including ${fmt(cuAmt)} in ${isSuper?'super ':''}catch-up contributions` : ''}.`;
+  else if (wantsLater) ctxNote = `Roth contributions grow tax-free. This plan fills your ${fmt(electLim)} pre-tax + Roth contribution limit for 2026${isCU ? `, including ${fmt(cuAmt)} in ${isSuper?'super ':''}catch-up contributions` : ''}.`;
+  else if (wantsAll) {
+    const splitDesc = strat === 'roth' ? 'all Roth (long time horizon — tax-free growth)' : strat === 'pretax' ? 'all Pre-Tax (peak earning years — reduce taxable income now)' : '50/50 Pre-Tax & Roth split (balanced tax diversification)';
+    ctxNote = `This plan fills your full ${fmt(electLim)} pre-tax + Roth contribution limit${isCU ? ` (including ${fmt(cuAmt)} ${isSuper?'super ':''}catch-up)` : ''} as ${splitDesc}${dAT > 0 ? `, plus after-tax contributions to reach the ${fmt(annLim)} 415(c) limit` : ''}.`;
+  }
+  else if (wantsMatch) ctxNote = `Contributing ${dPre + dRoth}% secures your full dollar-for-dollar employer match of ${fmt(maxMatch)} for 2026.`;
+
+  const cuNote = '';
 
   const megaNote = dAT > 0 ? `<div style="margin-top:10px;padding:8px 12px;background:#faf5ff;border-left:3px solid #a855f7;border-radius:7px;font-size:0.79rem;color:#4c1d95;">
     💜 <strong>Mega Backdoor Roth opportunity:</strong> Consider converting after-tax contributions to Roth via a Roth In-Plan Conversion.
@@ -565,142 +532,65 @@ function calculate() {
     <h3>Recommended Contribution Rates</h3>
     ${startRowsHtml}
     <div class="rec-note">
-      ${ctxNote ? `<div style="margin-bottom:9px;">${ctxNote}</div>` : ''}Percentages are of your estimated per-period gross wages of <strong>${fmt(ppGross)}</strong> (${fmt(gross)} ÷ 26 pay periods).${(dPre >= 75 || dRoth >= 75 || dAT >= 75) ? ' <strong>Note:</strong> your plan limits each contribution type to a maximum of 75% of gross pay per period.' : ''}
-      ${ppDone > 0 ? ` Your <strong>${fmt(ytdPre+ytdRoth)}</strong> in elective deferrals to date has been factored into the remaining period calculations.` : ''}
+      ${ctxNote ? `<div style="margin-bottom:9px;">${ctxNote}</div>` : ''}Percentages are of your estimated per-period gross wages of <strong>${fmt(ppGross)}</strong> (${fmt(gross)} ÷ 26 pay periods). Your plan will stop contributions automatically once IRS limits are reached.${(dPre >= 75 || dRoth >= 75 || dAT >= 75) ? ' <strong>Note:</strong> your plan limits each contribution type to a maximum of 75% of gross pay per period.' : ''}
+      ${ppDone > 0 ? ` Your <strong>${fmt(ytdPre+ytdRoth)}</strong> in pre-tax and Roth contributions to date has been factored into the remaining period calculations.` : ''}
     </div>
     ${megaNote}
   </div>`;
 
-  // ── Progress bars ─────────────────────────────────────────────────────────
-  // Elective bar: all 4 segments scale against electLim
-  const pPreBase  = totPreBase  / electLim * 100;
-  const pPreCU    = totPreCU    / electLim * 100;
-  const pRothBase = totRothBase / electLim * 100;
-  const pRothCU   = totRothCU   / electLim * 100;
-  const pMatch    = Math.min(totMatch / maxMatch * 100, 100);
-  const pTU       = trueUp > 0.50 ? Math.min(trueUp / maxMatch * 100, 100 - pMatch) : 0;
-  const pAT       = totAT > 0 ? Math.min(totAT / Math.max(annLim - totElec - totMatch, 1) * 100, 100) : 0;
-  // 415c bar segments as % of annLim
-  const p415pre   = totPre    / annLim * 100;
-  const p415roth  = totRoth   / annLim * 100;
-  const p415match = (trueUp > 0.50 ? totMatch + trueUp : totMatch) / annLim * 100;
-  const p415at    = totAT     / annLim * 100;
-  const p415c     = Math.min(grandTot / annLim * 100, 100);
+  // ── Build initial lim + table ──────────────────────────────────────────────
+  const initTotals = {
+    totPreBase, totPreCU, totRothBase, totRothCU,
+    totPre, totRoth, totElec, totMatch, totAT, grandTot, trueUp,
+    rows, wageCapped, eligGross, gross, electLim, annLim, maxMatch, isSuper
+  };
+  const initHtml = buildDynamicHtml(initTotals);
+  h += `<div id="limContainer">${initHtml.limHtml}</div>`;
 
-  const hasPCU  = totPreCU  > 0.50;
-  const hasRCU  = totRothCU > 0.50;
+  // ── What-If Explorer ───────────────────────────────────────────────────────
+  const wiFields = [
+    {idPct:'wiPre',  idPP:'wiPrePP',  label:'Pre-Tax',   val:dPre,  pp:ppDone+1, color:'#1e40af', bg:'#eff6ff', border:'#3b82f6'},
+    {idPct:'wiRoth', idPP:'wiRothPP', label:'Roth',      val:dRoth, pp:ppDone+1, color:'#065f46', bg:'#f0fdf4', border:'#10b981'},
+    {idPct:'wiAT',   idPP:'wiATPP',   label:'After-Tax', val:dAT,   pp:ppDone+1, color:'#6b21a8', bg:'#faf5ff', border:'#a855f7'},
+  ];
+  const wiRowsHtml = wiFields.map(function(wf) {
+    return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 13px;background:' + wf.bg + ';border-radius:8px;border-left:3px solid ' + wf.border + ';">'
+      + '<div>'
+      + '<label style="display:block;font-size:0.69rem;font-weight:700;color:' + wf.color + ';text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">' + wf.label + ' %</label>'
+      + '<div style="display:flex;align-items:center;gap:5px;">'
+      + '<input type="number" id="' + wf.idPct + '" value="' + wf.val + '" min="0" max="75" step="1" oninput="runWhatIf()" style="width:100%;padding:6px 8px;border:1.5px solid ' + wf.border + ';border-radius:6px;font-size:0.95rem;font-weight:700;color:' + wf.color + ';background:white;outline:none;-moz-appearance:textfield;">'
+      + '<span style="font-size:0.82rem;color:' + wf.color + ';font-weight:600;">%</span>'
+      + '</div></div>'
+      + '<div>'
+      + '<label style="display:block;font-size:0.69rem;font-weight:700;color:' + wf.color + ';text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">Start Pay Period</label>'
+      + '<input type="number" id="' + wf.idPP + '" value="' + wf.pp + '" min="1" max="26" step="1" oninput="runWhatIf()" style="width:100%;padding:6px 8px;border:1.5px solid ' + wf.border + ';border-radius:6px;font-size:0.95rem;font-weight:700;color:' + wf.color + ';background:white;outline:none;-moz-appearance:textfield;">'
+      + '</div></div>';
+  }).join('');
 
-  // Elective bar legend entries — only show non-zero types
-  const electLegend = [
-    totPreBase > 0.01  ? `${sw('linear-gradient(90deg,#1e40af,#3b82f6)')} Pre-Tax: ${fmt(totPreBase)}` : null,
-    hasPCU             ? `${sw('repeating-linear-gradient(60deg,#3b82f6,#3b82f6 3px,#bfdbfe 3px,#bfdbfe 6px)')} Pre-Tax ${isSuper?'Super ':''}CU: ${fmt(totPreCU)}` : null,
-    totRothBase > 0.01 ? `${sw('linear-gradient(90deg,#065f46,#10b981)')} Roth: ${fmt(totRothBase)}` : null,
-    hasRCU             ? `${sw('repeating-linear-gradient(60deg,#10b981,#10b981 3px,#a7f3d0 3px,#a7f3d0 6px)')} Roth ${isSuper?'Super ':''}CU: ${fmt(totRothCU)}` : null,
-  ].filter(Boolean).join(' &nbsp; ');
-
-  // 415c bar legend entries — only show non-zero types
-  const legend415 = [
-    totPre   > 0.01 ? `${sw('linear-gradient(90deg,#1e40af,#3b82f6)')} Pre-Tax: ${fmt(totPre)}` : null,
-    totRoth  > 0.01 ? `${sw('linear-gradient(90deg,#065f46,#10b981)')} Roth: ${fmt(totRoth)}` : null,
-    totMatch > 0.01 ? `${sw('linear-gradient(90deg,#c9a84c,#e8c96a)')} Match: ${fmt(trueUp>0.5?totMatch+trueUp:totMatch)}` : null,
-    totAT    > 0.01 ? `${sw('linear-gradient(90deg,#6b21a8,#a855f7)')} After-Tax: ${fmt(totAT)}` : null,
-  ].filter(Boolean).join(' &nbsp; ');
-
-  const atRoom = Math.max(0, annLim - totElec - (trueUp>0.5 ? totMatch+trueUp : totMatch));
-  const pATfull = atRoom > 0 ? Math.min(totAT / atRoom * 100, 100) : 0;
-
-  h += `<div class="lim-sec">
-    <div class="section-title">IRS Limit Progress</div>
-
-    <div class="lim-row">
-      <div class="lim-info"><span class="ln">Pre-Tax + Roth</span><span class="lv">${fmt(totElec)} of ${fmt(electLim)}</span></div>
-      <div class="prog-track-split">
-        <div class="seg-pretax"    style="width:${pPreBase}%"></div>
-        <div class="seg-pretax-cu" style="width:${pPreCU}%"></div>
-        <div class="seg-roth"      style="width:${pRothBase}%"></div>
-        <div class="seg-roth-cu"   style="width:${pRothCU}%"></div>
-      </div>
-      <div class="bar-legend">${electLegend}</div>
-    </div>
-
-    <div class="lim-row">
-      <div class="lim-info"><span class="ln">Employer Match${trueUp>0.5?' <span style="font-size:0.68rem;color:var(--gold);font-weight:600">(incl. est. true-up)</span>':''}</span><span class="lv">${fmt(trueUp>0.5?totMatch+trueUp:totMatch)} of ${fmt(maxMatch)}</span></div>
-      <div class="prog-track-split">
-        <div class="seg-match"  style="width:${pMatch}%"></div>
-        <div class="seg-trueup" style="width:${pTU}%"></div>
-      </div>
-      ${trueUp>0.5?`<div class="bar-legend">${sw('linear-gradient(90deg,#c9a84c,#e8c96a)')} Received: ${fmt(totMatch)} &nbsp; ${sw('repeating-linear-gradient(60deg,#e8c96a,#e8c96a 3px,#fff8dc 3px,#fff8dc 6px)')} Est. True-Up: ${fmt(trueUp)}</div>`:''}
-    </div>
-
-    <div class="lim-row">
-      <div class="lim-info"><span class="ln">After-Tax Contributions</span><span class="lv">${fmt(totAT)} of ${fmt(atRoom)}</span></div>
-      <div class="prog-track"><div class="seg-at" style="width:${pATfull}%;height:100%;border-radius:99px;transition:width 0.7s;"></div></div>
-    </div>
-
-    <div class="lim-row">
-      <div class="lim-info"><span class="ln">Annual Additions 415(c) — Grand Total</span><span class="lv">${fmt(grandTot)} of ${fmt(annLim)}</span></div>
-      <div class="prog-track-split">
-        <div class="seg-415-pre"   style="width:${p415pre}%"></div>
-        <div class="seg-415-roth"  style="width:${p415roth}%"></div>
-        <div class="seg-415-match" style="width:${p415match}%"></div>
-        <div class="seg-415-at"    style="width:${p415at}%"></div>
-      </div>
-      <div class="bar-legend">${legend415}</div>
-    </div>
+  h += `<div class="rec-box" id="whatifWrap"
+      data-ppgross="${ppGross.toFixed(4)}"
+      data-ppelig="${ppElig.toFixed(4)}"
+      data-ppleft="${ppLeft}"
+      data-ppdone="${ppDone}"
+      data-electlim="${electLim}"
+      data-annlim="${annLim}"
+      data-maxmatch="${maxMatch.toFixed(4)}"
+      data-matchpct="${L.matchPct}"
+      data-iscu="${isCU ? 1 : 0}"
+      data-issuper="${isSuper ? 1 : 0}"
+      data-lbase="${L.base}"
+      data-wagecapped="${wageCapped ? 1 : 0}"
+      data-eliggross="${eligGross.toFixed(4)}"
+      data-gross="${gross}"
+      data-ytdelec="${(ytdPre+ytdRoth).toFixed(4)}"
+      data-ytdat="${ytdAT.toFixed(4)}"
+      data-ytdmatch="${ytdMatch.toFixed(4)}">
+    <h3>Explore Different Rates</h3>
+    <p style="font-size:0.78rem;color:var(--muted);margin-bottom:14px;">Adjust the rates and start periods below — IRS Limit Progress and Pay Period Breakdown update live.</p>
+    <div style="display:flex;flex-direction:column;gap:8px;">${wiRowsHtml}</div>
   </div>`;
 
-  // True-up box
-  if (trueUp > 0.50) {
-    h += `<div class="trueup">
-      <h4>🔔 Estimated Year-End True-Up</h4>
-      <div class="ta">${fmt(trueUp)}</div>
-      <p>Because this plan includes a <strong>true-up provision</strong>, you may receive an additional employer match of approximately <strong>${fmt(trueUp)}</strong> after the plan year closes. True-ups occur when contributions were front- or back-loaded and the full match wasn't captured in-period. Typically processed in Q1 of the following year.</p>
-    </div>`;
-  }
-
-  // Pay period table
-  h += `<div class="tbl-sec">
-    <h3>Pay Period Contribution Breakdown</h3>
-    <div class="tbl-wrap"><table>
-      <thead><tr>
-        <th>Pay Period</th><th>Gross Pay</th>
-        <th>Pre-Tax</th><th>Pre-Tax CU</th>
-        <th>Roth</th><th>Roth CU</th>
-        <th>After-Tax</th><th>Match</th><th>Total</th>
-      </tr></thead><tbody>`;
-
-  rows.forEach(r => {
-    const rc  = r.past ? 'class="pr"' : '';
-    const bdg = r.past ? '<span class="pl">YTD actual</span>' : '';
-    const tot = r.pre + r.preCU + r.roth + r.rothCU + r.at + r.match;
-    const d = v => v > 0.01 ? fmt(v) : '—';
-    h += `<tr ${rc}>
-      <td>${r.label}${bdg}</td>
-      <td>${fmt(r.gross)}</td>
-      <td>${d(r.pre)}</td>
-      <td>${d(r.preCU)}</td>
-      <td>${d(r.roth)}</td>
-      <td>${d(r.rothCU)}</td>
-      <td>${d(r.at)}</td>
-      <td>${d(r.match)}</td>
-      <td>${fmt(tot)}</td>
-    </tr>`;
-  });
-
-  const matchCell = trueUp > 0.50
-    ? `${fmt(totMatch)} <span style="font-size:0.7rem;opacity:0.65">(+${fmt(trueUp)} true-up)</span>`
-    : fmt(totMatch);
-  const grossCell = wageCapped
-    ? `${fmt(eligGross)} <span style="font-size:0.7rem;opacity:0.65">(eligible; actual ${fmt(gross)})</span>`
-    : fmt(gross);
-
-  h += `<tr class="tot">
-    <td>FULL YEAR TOTAL</td><td>${grossCell}</td>
-    <td>${fmt(totPreBase)}</td><td>${totPreCU>0.01?fmt(totPreCU):'—'}</td>
-    <td>${fmt(totRothBase)}</td><td>${totRothCU>0.01?fmt(totRothCU):'—'}</td>
-    <td>${totAT>0.01?fmt(totAT):'—'}</td><td>${matchCell}</td>
-    <td>${fmt(grandTot)}</td>
-  </tr></tbody></table></div></div>`;
+  h += `<div id="tblContainer">${initHtml.tblHtml}</div>`;
 
   h += `<div style="margin-top:28px;padding:14px 18px;background:#f8f9fb;border:1px solid var(--border);border-radius:9px;font-size:0.72rem;color:var(--muted);line-height:1.65;">
     <strong style="color:var(--navy);">⚠️ Disclaimer</strong> — This tool is provided for <strong>informational and illustrative purposes only</strong> and does not constitute financial, tax, or legal advice. All figures are estimates based on the inputs you provide and the 2026 IRS limits shown. Actual contribution amounts, employer match calculations, and tax outcomes may differ based on your plan's specific rules, payroll processing, mid-year compensation changes, and other factors. Consult your plan administrator, a qualified financial advisor, or a tax professional before making contribution elections or financial decisions.
@@ -713,6 +603,234 @@ function calculate() {
 
   $('out').innerHTML = h;
   $('out').scrollTop = 0;
+  // Do NOT call runWhatIf() here — the initial limContainer/tblContainer are already
+  // correctly rendered from the full calculate() simulation above.
+  // runWhatIf() only fires when the user changes what-if inputs.
+}
+
+// ── Shared renderer: builds IRS Limit Progress + table from a totals object ──
+function buildDynamicHtml(t) {
+  const f   = n => '$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  const sw2 = bg => '<span class="sw" style="background:' + bg + '"></span>';
+
+  const totElec = t.totPre + t.totRoth;
+  const trueUp  = t.trueUp || 0;
+
+  // Elective bar percentages
+  const pPreBase  = t.totPreBase  / t.electLim * 100;
+  const pPreCU    = t.totPreCU    / t.electLim * 100;
+  const pRothBase = t.totRothBase / t.electLim * 100;
+  const pRothCU   = t.totRothCU   / t.electLim * 100;
+  const pMatch    = Math.min(t.totMatch / t.maxMatch * 100, 100);
+  const pTU       = trueUp > 0.5 ? Math.min(trueUp / t.maxMatch * 100, 100 - pMatch) : 0;
+  const atRoom    = Math.max(0, t.annLim - totElec - (trueUp > 0.5 ? t.totMatch + trueUp : t.totMatch));
+  const pATfull   = atRoom > 0 ? Math.min(t.totAT / atRoom * 100, 100) : 0;
+  const p415pre   = t.totPre   / t.annLim * 100;
+  const p415roth  = t.totRoth  / t.annLim * 100;
+  const p415match = (trueUp > 0.5 ? t.totMatch + trueUp : t.totMatch) / t.annLim * 100;
+  const p415at    = t.totAT    / t.annLim * 100;
+
+  const hasPCU = t.totPreCU  > 0.5;
+  const hasRCU = t.totRothCU > 0.5;
+  const su     = t.isSuper ? 1 : 0;
+
+  const electLegend = [
+    t.totPreBase  > 0.01 ? sw2('linear-gradient(90deg,#1e40af,#3b82f6)') + ' Pre-Tax: ' + f(t.totPreBase) : null,
+    hasPCU               ? sw2('repeating-linear-gradient(60deg,#3b82f6,#3b82f6 3px,#bfdbfe 3px,#bfdbfe 6px)') + ' Pre-Tax ' + (su ? 'Super ' : '') + 'CU: ' + f(t.totPreCU) : null,
+    t.totRothBase > 0.01 ? sw2('linear-gradient(90deg,#065f46,#10b981)') + ' Roth: ' + f(t.totRothBase) : null,
+    hasRCU               ? sw2('repeating-linear-gradient(60deg,#10b981,#10b981 3px,#a7f3d0 3px,#a7f3d0 6px)') + ' Roth ' + (su ? 'Super ' : '') + 'CU: ' + f(t.totRothCU) : null,
+  ].filter(Boolean).join(' &nbsp; ');
+
+  const legend415 = [
+    t.totPre   > 0.01 ? sw2('linear-gradient(90deg,#1e40af,#3b82f6)') + ' Pre-Tax: ' + f(t.totPre) : null,
+    t.totRoth  > 0.01 ? sw2('linear-gradient(90deg,#065f46,#10b981)') + ' Roth: ' + f(t.totRoth) : null,
+    t.totMatch > 0.01 ? sw2('linear-gradient(90deg,#c9a84c,#e8c96a)') + ' Match: ' + f(trueUp > 0.5 ? t.totMatch + trueUp : t.totMatch) : null,
+    t.totAT    > 0.01 ? sw2('linear-gradient(90deg,#6b21a8,#a855f7)') + ' After-Tax: ' + f(t.totAT) : null,
+  ].filter(Boolean).join(' &nbsp; ');
+
+  const tuLegend = trueUp > 0.5
+    ? '<div class="bar-legend">' + sw2('linear-gradient(90deg,#c9a84c,#e8c96a)') + ' Received: ' + f(t.totMatch)
+      + ' &nbsp; ' + sw2('repeating-linear-gradient(60deg,#e8c96a,#e8c96a 3px,#fff8dc 3px,#fff8dc 6px)') + ' Est. True-Up: ' + f(trueUp) + '</div>'
+    : '';
+
+  const customBanner = t.isCustom
+    ? '<div style="margin-bottom:12px;padding:7px 12px;background:#fff8e1;border-left:3px solid #f59e0b;border-radius:7px;font-size:0.75rem;color:#92400e;">Showing custom rates — results below reflect your Explore Different Rates inputs.</div>'
+    : '';
+
+  // ── IRS Limit Progress HTML ─────────────────────────────────────────────────
+  let limHtml = '<div class="lim-sec">'
+    + customBanner
+    + '<div class="section-title">IRS Limit Progress</div>'
+    + '<div class="lim-row">'
+    +   '<div class="lim-info"><span class="ln">Pre-Tax + Roth</span><span class="lv">' + f(totElec) + ' of ' + f(t.electLim) + '</span></div>'
+    +   '<div class="prog-track-split">'
+    +     '<div class="seg-pretax"    style="width:' + pPreBase  + '%"></div>'
+    +     '<div class="seg-pretax-cu" style="width:' + pPreCU    + '%"></div>'
+    +     '<div class="seg-roth"      style="width:' + pRothBase + '%"></div>'
+    +     '<div class="seg-roth-cu"   style="width:' + pRothCU   + '%"></div>'
+    +   '</div>'
+    +   '<div class="bar-legend">' + electLegend + '</div>'
+    + '</div>'
+    + '<div class="lim-row">'
+    +   '<div class="lim-info"><span class="ln">Employer Match' + (trueUp > 0.5 ? ' <span style="font-size:0.68rem;color:var(--gold);font-weight:600">(incl. est. true-up)</span>' : '') + '</span><span class="lv">' + f(trueUp > 0.5 ? t.totMatch + trueUp : t.totMatch) + ' of ' + f(t.maxMatch) + '</span></div>'
+    +   '<div class="prog-track-split"><div class="seg-match" style="width:' + pMatch + '%"></div><div class="seg-trueup" style="width:' + pTU + '%"></div></div>'
+    +   tuLegend
+    + '</div>'
+    + '<div class="lim-row">'
+    +   '<div class="lim-info"><span class="ln">After-Tax Contributions</span><span class="lv">' + f(t.totAT) + ' of ' + f(atRoom) + '</span></div>'
+    +   '<div class="prog-track"><div class="seg-at" style="width:' + pATfull + '%;height:100%;border-radius:99px;transition:width 0.4s;"></div></div>'
+    + '</div>'
+    + '<div class="lim-row">'
+    +   '<div class="lim-info"><span class="ln">Annual Additions 415(c) — Grand Total</span><span class="lv">' + f(trueUp > 0.5 ? t.grandTot + trueUp : t.grandTot) + ' of ' + f(t.annLim) + '</span></div>'
+    +   '<div class="prog-track-split">'
+    +     '<div class="seg-415-pre"   style="width:' + p415pre   + '%"></div>'
+    +     '<div class="seg-415-roth"  style="width:' + p415roth  + '%"></div>'
+    +     '<div class="seg-415-match" style="width:' + p415match + '%"></div>'
+    +     '<div class="seg-415-at"    style="width:' + p415at    + '%"></div>'
+    +   '</div>'
+    +   '<div class="bar-legend">' + legend415 + '</div>'
+    + '</div>'
+    + '</div>';
+
+  if (trueUp > 0.5) {
+    limHtml += '<div class="trueup">'
+      + '<h4>🔔 Estimated Year-End True-Up</h4>'
+      + '<div class="ta">' + f(trueUp) + '</div>'
+      + '<p>Because this plan includes a <strong>true-up provision</strong>, you may receive an additional employer match of approximately <strong>' + f(trueUp) + '</strong> after the plan year closes. True-ups occur when contributions were front- or back-loaded and the full match wasn\'t captured in-period. Typically processed in Q1 of the following year.</p>'
+      + '</div>';
+  }
+
+  // ── Pay Period Table HTML ───────────────────────────────────────────────────
+  const d = v => v > 0.01 ? f(v) : '—';
+  let tblHtml = '<div class="tbl-sec"><h3>Pay Period Contribution Breakdown</h3><div class="tbl-wrap"><table>'
+    + '<thead><tr><th>Pay Period</th><th>Gross Pay</th><th>Pre-Tax</th><th>Pre-Tax CU</th><th>Roth</th><th>Roth CU</th><th>After-Tax</th><th>Match</th><th>Total</th></tr></thead><tbody>';
+
+  t.rows.forEach(function(r) {
+    const rc  = r.past ? 'class="pr"' : '';
+    const bdg = r.past ? '<span class="pl">YTD actual</span>' : '';
+    const tot = r.pre + r.preCU + r.roth + r.rothCU + r.at + r.match;
+    tblHtml += '<tr ' + rc + '>'
+      + '<td>' + r.label + bdg + '</td>'
+      + '<td>' + f(r.gross) + '</td>'
+      + '<td>' + d(r.pre)   + '</td>'
+      + '<td>' + d(r.preCU) + '</td>'
+      + '<td>' + d(r.roth)  + '</td>'
+      + '<td>' + d(r.rothCU)+ '</td>'
+      + '<td>' + d(r.at)    + '</td>'
+      + '<td>' + d(r.match) + '</td>'
+      + '<td>' + f(tot)     + '</td>'
+      + '</tr>';
+  });
+
+  const matchCell = trueUp > 0.5
+    ? f(t.totMatch) + ' <span style="font-size:0.7rem;opacity:0.65">(+' + f(trueUp) + ' true-up)</span>'
+    : f(t.totMatch);
+  const grossCell = t.wageCapped
+    ? f(t.eligGross) + ' <span style="font-size:0.7rem;opacity:0.65">(eligible; actual ' + f(t.gross) + ')</span>'
+    : f(t.gross);
+
+  tblHtml += '<tr class="tot">'
+    + '<td>FULL YEAR TOTAL</td><td>' + grossCell + '</td>'
+    + '<td>' + f(t.totPreBase)  + '</td>'
+    + '<td>' + (t.totPreCU  > 0.01 ? f(t.totPreCU)  : '—') + '</td>'
+    + '<td>' + f(t.totRothBase) + '</td>'
+    + '<td>' + (t.totRothCU > 0.01 ? f(t.totRothCU) : '—') + '</td>'
+    + '<td>' + (t.totAT     > 0.01 ? f(t.totAT)     : '—') + '</td>'
+    + '<td>' + matchCell + '</td>'
+    + '<td>' + f(t.grandTot) + '</td>'
+    + '</tr></tbody></table></div></div>';
+
+  return { limHtml, tblHtml };
+}
+
+function runWhatIf() {
+  const wrap = $('whatifWrap');
+  const limCont = $('limContainer');
+  const tblCont = $('tblContainer');
+  if (!wrap || !limCont || !tblCont) return;
+
+  const d        = wrap.dataset;
+  const ppGross  = parseFloat(d.ppgross);
+  const ppElig   = parseFloat(d.ppelig);
+  const ppLeft   = parseInt(d.ppleft);
+  const ppDoneWI = parseInt(d.ppdone);
+  const electLim = parseFloat(d.electlim);
+  const annLim   = parseFloat(d.annlim);
+  const maxMatch = parseFloat(d.maxmatch);
+  const matchPct = parseFloat(d.matchpct);
+  const wageCapped = d.wagecapped === '1';
+  const eligGross  = parseFloat(d.eliggross);
+  const gross      = parseFloat(d.gross);
+  const isSuper    = d.issuper === '1';
+  const ytdElec  = parseFloat(d.ytdelec);
+  const ytdAT    = parseFloat(d.ytdat);
+  const ytdMatch = parseFloat(d.ytdmatch);
+
+  const wPre  = Math.min(75, Math.max(0, parseInt($('wiPre').value)  || 0));
+  const wRoth = Math.min(75, Math.max(0, parseInt($('wiRoth').value) || 0));
+  const wAT   = Math.min(75, Math.max(0, parseInt($('wiAT').value)   || 0));
+
+  const spPre  = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiPrePP').value)  || ppDoneWI + 1));
+  const spRoth = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiRothPP').value) || ppDoneWI + 1));
+  const spAT   = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiATPP').value)   || ppDoneWI + 1));
+
+  let cumElec = ytdElec, cumPre = 0, cumRoth = 0, cumAT = ytdAT, cumMatch = ytdMatch;
+  const rows = [];
+
+  if (ppDoneWI > 0) {
+    rows.push({ label: 'Periods 1\u2013' + ppDoneWI, past: true,
+      pre: ytdElec, preCU: 0, roth: 0, rothCU: 0,
+      at: ytdAT, match: ytdMatch, gross: eligGross / 26 * ppDoneWI });
+  }
+
+  for (let pp = ppDoneWI + 1; pp <= 26; pp++) {
+    const ppPreWant  = (pp >= spPre  && wPre  > 0) ? ppGross * wPre  / 100 : 0;
+    const ppRothWant = (pp >= spRoth && wRoth > 0) ? ppGross * wRoth / 100 : 0;
+    const ppATwant   = (pp >= spAT   && wAT   > 0) ? ppGross * wAT   / 100 : 0;
+
+    // Cap elective at electLim, distribute cap proportionally between pre and roth
+    const elecRoom  = Math.max(0, electLim - cumElec);
+    const ppElecRaw = ppPreWant + ppRothWant;
+    const ppElec    = Math.min(ppElecRaw, elecRoom);
+    const ratio     = ppElecRaw > 0 ? ppElec / ppElecRaw : 0;
+    const ppPre     = ppPreWant  * ratio;
+    const ppRoth    = ppRothWant * ratio;
+
+    // Match on actual elective
+    const ppMatch = Math.min(Math.min(ppElec, ppElig * matchPct), Math.max(0, maxMatch - cumMatch));
+
+    // After-tax: only after elective is fully exhausted for the year (elective-first priority)
+    let ppAT = 0;
+    if (cumElec + ppElec >= electLim - 0.01) {
+      const atRoom415 = Math.max(0, annLim - cumElec - ppElec - cumAT - cumMatch - ppMatch);
+      ppAT = Math.min(ppATwant, atRoom415);
+    }
+
+    cumElec  += ppElec;
+    cumPre   += ppPre;
+    cumRoth  += ppRoth;
+    cumAT    += ppAT;
+    cumMatch += ppMatch;
+
+    rows.push({ label: 'Period ' + pp, past: false,
+      pre: ppPre, preCU: 0, roth: ppRoth, rothCU: 0,
+      at: ppAT, match: ppMatch, gross: ppGross });
+  }
+
+  const totPre   = cumPre   + (ppDoneWI > 0 ? ytdElec : 0);
+  const totRoth  = cumRoth;
+  const totMatch = cumMatch;
+  const totAT    = cumAT;
+  const grandTot = cumElec + totAT + totMatch;
+
+  const result = buildDynamicHtml({
+    totPreBase: totPre, totPreCU: 0, totRothBase: totRoth, totRothCU: 0,
+    totPre, totRoth, totMatch, totAT, grandTot, trueUp: 0,
+    rows, wageCapped, eligGross, gross,
+    electLim, annLim, maxMatch, isSuper, isCustom: true
+  });
+  limCont.innerHTML = result.limHtml;
+  tblCont.innerHTML = result.tblHtml;
 }
 
 function resetResults() {
