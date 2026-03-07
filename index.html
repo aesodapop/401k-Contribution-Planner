@@ -491,7 +491,7 @@ function calculate() {
 
   if (ppLeft === 0) h += `<div class="alert a-warn">⚠️ All 26 pay periods are complete. Your 2026 contributions are finalized.</div>`;
   if (wageCapped) h += `<div class="alert a-warn">⚠️ <strong>IRS Eligible Wage Cap Applied.</strong> Wages entered (${fmt(gross)}) exceed the 2026 §401(a)(17) limit. Match and limit calculations use <strong>${fmt(L.wageCap)}</strong> in eligible compensation.</div>`;
-  if (isSuper) h += `<div class="alert a-super">⭐ <strong>Super Catch-Up Eligible!</strong> Ages 60–63 get an enhanced catch-up of <strong>${fmt(cuAmt)}</strong>. Your elective limit is <strong>${fmt(electLim)}</strong> and 415(c) limit is <strong>${fmt(annLim)}</strong>.</div>`;
+  if (isSuper) h += `<div class="alert a-super">⭐ <strong>Super Catch-Up Eligible!</strong> Ages 60–63 get an enhanced catch-up of <strong>${fmt(cuAmt)}</strong>. Your pre-tax + Roth contribution limit is <strong>${fmt(electLim)}</strong> and 415(c) limit is <strong>${fmt(annLim)}</strong>.</div>`;
   else if (isCU) h += `<div class="alert a-info" style="background:#f0fdf4;border-left:4px solid #10b981;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:0.82rem;color:#065f46;">✅ <strong>Catch-Up Eligible!</strong> Age 50+ qualifies for an additional <strong>${fmt(cuAmt)}</strong> in catch-up contributions. Your pre-tax + Roth contribution limit is <strong>${fmt(electLim)}</strong>.</div>`;
 
   function elecRowHtml(label, pct, startPP, color, bg, border) {
