@@ -441,6 +441,38 @@ function calculate() {
   const ppWantRoth = ppGross * dRoth / 100;
   const ppWantAT   = ppGross * dAT   / 100;
 
+  // ── Fixed-point: find effective 415(c) budget that accounts for true-up ────
+  // The true-up will be paid after year-end and counts against the 415(c) limit.
+  // We solve for budget where: trueUp(budget) + budget = annLim.
+  // Iterate: budget = annLim - trueUp(budget), converges in ~5 passes.
+  let effectiveBudget = annLim;
+  for (let pass = 0; pass < 8; pass++) {
+    let _cumPre=ytdPre, _cumRoth=ytdRoth, _cumAT=ytdAT, _cumMatch=ytdMatch;
+    for (let i=1; i<=ppLeft; i++) {
+      const ppNum=ppDone+i;
+      const ppGrossThis=ppGrossArr[ppNum-1];
+      const ppEligThis=ppGrossThis*(eligGross/totalAnnualGross);
+      let _ppPre=0, _ppPreCU=0, _ppRoth=0, _ppRothCU=0, _ppAT=0, _ppMatch=0;
+      const r415=Math.max(0,effectiveBudget-_cumPre-_cumRoth-_cumAT-_cumMatch);
+      const baseRoomForPre=Math.max(0,L.base-_cumPre-_cumRoth);
+      _ppPre=Math.min(ppGrossThis*dPre/100,baseRoomForPre,Math.max(0,tgtPre-_cumPre),r415);
+      if(isCU&&tgtPre>0){const bu=_cumPre+_cumRoth+_ppPre;if(bu>=L.base-0.01){const cr=Math.max(0,electLim-_cumPre-_cumRoth-_ppPre);_ppPreCU=Math.min(Math.max(0,ppGrossThis*dPre/100-_ppPre),cr,Math.max(0,tgtPre-_cumPre-_ppPre));}}
+      const baseRoomForRoth=Math.max(0,L.base-_cumPre-_cumRoth-_ppPre-_ppPreCU);
+      _ppRoth=Math.min(ppGrossThis*dRoth/100,baseRoomForRoth,Math.max(0,tgtRoth-_cumRoth),Math.max(0,r415-_ppPre-_ppPreCU));
+      if(isCU&&tgtRoth>0){const bu=_cumPre+_cumRoth+_ppPre+_ppPreCU+_ppRoth;if(bu>=L.base-0.01){const cr=Math.max(0,electLim-_cumPre-_cumRoth-_ppPre-_ppPreCU-_ppRoth);_ppRothCU=Math.min(Math.max(0,ppGrossThis*dRoth/100-_ppRoth),cr,Math.max(0,tgtRoth-_cumRoth-_ppRoth));}}
+      const empTotal=_ppPre+_ppPreCU+_ppRoth+_ppRothCU;
+      _ppMatch=Math.min(empTotal,ppEligThis*L.matchPct,Math.max(0,maxMatch-_cumMatch),Math.max(0,r415-empTotal));
+      const r4m=Math.max(0,r415-empTotal-_ppMatch);
+      _ppAT=tgtAT>0?Math.min(ppGrossThis*dAT/100,r4m,Math.max(0,tgtAT-_cumAT)):0;
+      _cumPre+=_ppPre+_ppPreCU; _cumRoth+=_ppRoth+_ppRothCU; _cumAT+=_ppAT; _cumMatch+=_ppMatch;
+    }
+    const passElec=_cumPre+_cumRoth, passMatch=_cumMatch;
+    const passTrueUp=Math.max(0,Math.min(passElec,maxMatch)-passMatch);
+    const newBudget=annLim-passTrueUp;
+    if(Math.abs(newBudget-effectiveBudget)<0.01) break;
+    effectiveBudget=newBudget;
+  }
+
   // ── Per-period simulation ────────────────────────────────────────────────────
   // Fixed whole-number elected amounts each period; plan caps at IRS limits.
 
@@ -498,14 +530,11 @@ function calculate() {
     ppMatch = Math.min(empTotal, ppEligThis * L.matchPct);
     ppMatch = Math.min(ppMatch, Math.max(0, maxMatch - cumMatch));
 
-    // Step 6: After-tax
+    // Step 6: After-tax — use effectiveBudget (annLim minus true-up reserve) as ceiling
     if (tgtAT > 0) {
-      const room415 = Math.max(0, annLim - cumPre - cumRoth - cumAT - cumMatch
-                                         - ppPre - ppPreCU - ppRoth - ppRothCU - ppMatch);
-      // Reserve space for the estimated future true-up so AT doesn't crowd it out
-      const projectedTrueUp = Math.max(0, Math.min(electLim, maxMatch) - (cumMatch + ppMatch));
-      const room415ForAT = Math.max(0, room415 - projectedTrueUp);
-      ppAT = Math.min(ppWantATThis, room415ForAT, Math.max(0, tgtAT - cumAT));
+      const room415 = Math.max(0, effectiveBudget - cumPre - cumRoth - cumAT - cumMatch
+                                                  - ppPre - ppPreCU - ppRoth - ppRothCU - ppMatch);
+      ppAT = Math.min(ppWantATThis, room415, Math.max(0, tgtAT - cumAT));
     }
 
     cumPre   += ppPre + ppPreCU;
@@ -864,6 +893,32 @@ function runWhatIf() {
   const spRoth = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiRothPP').value) || ppDoneWI + 1));
   const spAT   = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiATPP').value)   || ppDoneWI + 1));
 
+  // Fixed-point: find effectiveBudget where trueUp + budget = annLim
+  let wiEffectiveBudget = annLim;
+  for (let pass = 0; pass < 8; pass++) {
+    let _cumElec=ytdElec, _cumAT=ytdAT, _cumMatch=ytdMatch;
+    for (let pp=ppDoneWI+1; pp<=26; pp++) {
+      const g=ppGrossArr[pp-1];
+      const ppEligThis=gross>0?g*(eligGross/gross):ppElig;
+      const ppPreWant=(pp>=spPre&&wPre>0)?g*wPre/100:0;
+      const ppRothWant=(pp>=spRoth&&wRoth>0)?g*wRoth/100:0;
+      const ppATwant=(pp>=spAT&&wAT>0)?g*wAT/100:0;
+      const r415=Math.max(0,wiEffectiveBudget-_cumElec-_cumAT-_cumMatch);
+      const ppPre=Math.min(ppPreWant,Math.max(0,electLim-_cumElec),r415);
+      const ppRoth=Math.min(ppRothWant,Math.max(0,electLim-_cumElec-ppPre),Math.max(0,r415-ppPre));
+      const ppEl=ppPre+ppRoth;
+      const r4e=Math.max(0,r415-ppEl);
+      const ppMt=Math.min(Math.min(ppEl,ppEligThis*matchPct),Math.max(0,maxMatch-_cumMatch),r4e);
+      const r4m=Math.max(0,r4e-ppMt);
+      const ppAT=ppATwant>0?Math.min(ppATwant,r4m):0;
+      _cumElec+=ppEl; _cumAT+=ppAT; _cumMatch+=ppMt;
+    }
+    const _trueUp=Math.max(0,Math.min(_cumElec,maxMatch)-_cumMatch);
+    const newBudget=annLim-_trueUp;
+    if(Math.abs(newBudget-wiEffectiveBudget)<0.01) break;
+    wiEffectiveBudget=newBudget;
+  }
+
   let cumElec = ytdElec, cumPre = 0, cumRoth = 0, cumAT = ytdAT, cumMatch = ytdMatch;
   const rows = [];
 
@@ -882,28 +937,21 @@ function runWhatIf() {
     const ppRothWant = (pp >= spRoth && wRoth > 0) ? ppGrossThis * wRoth / 100 : 0;
     const ppATwant   = (pp >= spAT   && wAT   > 0) ? ppGrossThis * wAT   / 100 : 0;
 
-    // 415(c) room remaining before this period (all prior contributions combined)
-    const room415Before = Math.max(0, annLim - cumElec - cumAT - cumMatch);
+    const room415Before = Math.max(0, wiEffectiveBudget - cumElec - cumAT - cumMatch);
 
-    // Step 1 & 2: Pre-tax then Roth — each capped by elective room AND 415(c) room
-    const ppPre  = Math.min(ppPreWant,  Math.max(0, electLim - cumElec),              room415Before);
-    const ppRoth = Math.min(ppRothWant, Math.max(0, electLim - cumElec - ppPre),       Math.max(0, room415Before - ppPre));
+    const ppPre  = Math.min(ppPreWant,  Math.max(0, electLim - cumElec),         room415Before);
+    const ppRoth = Math.min(ppRothWant, Math.max(0, electLim - cumElec - ppPre), Math.max(0, room415Before - ppPre));
     const ppElec = ppPre + ppRoth;
 
-    // Step 3: Match — capped by per-period match, annual match budget, AND remaining 415(c) room
-    const room415AfterElec  = Math.max(0, room415Before - ppElec);
+    const room415AfterElec = Math.max(0, room415Before - ppElec);
     const ppMatch = Math.min(
       Math.min(ppElec, ppEligThis * matchPct),
       Math.max(0, maxMatch - cumMatch),
       room415AfterElec
     );
 
-    // Step 4: After-tax — whatever 415(c) room remains after elective + match
     const room415AfterMatch = Math.max(0, room415AfterElec - ppMatch);
-    // Reserve space for the estimated future true-up so AT doesn't crowd it out
-    const projectedTrueUp = Math.max(0, Math.min(electLim, maxMatch) - (cumMatch + ppMatch));
-    const room415ForAT = Math.max(0, room415AfterMatch - projectedTrueUp);
-    const ppAT = ppATwant > 0 ? Math.min(ppATwant, room415ForAT) : 0;
+    const ppAT = ppATwant > 0 ? Math.min(ppATwant, room415AfterMatch) : 0;
 
     cumElec  += ppElec;
     cumPre   += ppPre;
