@@ -441,19 +441,18 @@ function calculate() {
   const ppWantRoth = ppGross * dRoth / 100;
   const ppWantAT   = ppGross * dAT   / 100;
 
-  // ── Fixed-point: find effective 415(c) budget that accounts for true-up ────
-  // The true-up will be paid after year-end and counts against the 415(c) limit.
-  // We solve for budget where: trueUp(budget) + budget = annLim.
-  // Iterate: budget = annLim - trueUp(budget), converges in ~5 passes.
-  let effectiveBudget = annLim;
-  for (let pass = 0; pass < 8; pass++) {
+  // ── Binary search: find effective 415(c) budget that accounts for true-up ──
+  // We need the highest budget B such that grand(B) + trueUp(B) <= annLim.
+  // Fixed-point iteration can oscillate for wage-capped salaries with AT contributions;
+  // binary search converges reliably in 60 iterations to < $0.01 precision.
+  function calcPassSim(eb) {
     let _cumPre=ytdPre, _cumRoth=ytdRoth, _cumAT=ytdAT, _cumMatch=ytdMatch;
     for (let i=1; i<=ppLeft; i++) {
       const ppNum=ppDone+i;
       const ppGrossThis=ppGrossArr[ppNum-1];
       const ppEligThis=ppGrossThis*(eligGross/totalAnnualGross);
       let _ppPre=0, _ppPreCU=0, _ppRoth=0, _ppRothCU=0, _ppAT=0, _ppMatch=0;
-      const r415=Math.max(0,effectiveBudget-_cumPre-_cumRoth-_cumAT-_cumMatch);
+      const r415=Math.max(0,eb-_cumPre-_cumRoth-_cumAT-_cumMatch);
       const baseRoomForPre=Math.max(0,L.base-_cumPre-_cumRoth);
       _ppPre=Math.min(ppGrossThis*dPre/100,baseRoomForPre,Math.max(0,tgtPre-_cumPre),r415);
       if(isCU&&tgtPre>0){const bu=_cumPre+_cumRoth+_ppPre;if(bu>=L.base-0.01){const cr=Math.max(0,electLim-_cumPre-_cumRoth-_ppPre);_ppPreCU=Math.min(Math.max(0,ppGrossThis*dPre/100-_ppPre),cr,Math.max(0,tgtPre-_cumPre-_ppPre));}}
@@ -466,12 +465,16 @@ function calculate() {
       _ppAT=tgtAT>0?Math.min(ppGrossThis*dAT/100,r4m,Math.max(0,tgtAT-_cumAT)):0;
       _cumPre+=_ppPre+_ppPreCU; _cumRoth+=_ppRoth+_ppRothCU; _cumAT+=_ppAT; _cumMatch+=_ppMatch;
     }
-    const passElec=_cumPre+_cumRoth, passMatch=_cumMatch;
-    const passTrueUp=Math.max(0,Math.min(passElec,maxMatch)-passMatch);
-    const newBudget=annLim-passTrueUp;
-    if(Math.abs(newBudget-effectiveBudget)<0.01) break;
-    effectiveBudget=newBudget;
+    const elec=_cumPre+_cumRoth;
+    return elec+_cumAT+_cumMatch + Math.max(0,Math.min(elec,maxMatch)-_cumMatch);
   }
+  let bsLo=0, bsHi=annLim;
+  for (let i=0; i<60; i++) {
+    const mid=(bsLo+bsHi)/2;
+    if(calcPassSim(mid)<=annLim+0.005) bsLo=mid; else bsHi=mid;
+    if(bsHi-bsLo<0.005) break;
+  }
+  const effectiveBudget = bsLo;
 
   // ── Per-period simulation ────────────────────────────────────────────────────
   // Fixed whole-number elected amounts each period; plan caps at IRS limits.
@@ -893,9 +896,9 @@ function runWhatIf() {
   const spRoth = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiRothPP').value) || ppDoneWI + 1));
   const spAT   = Math.max(ppDoneWI + 1, Math.min(26, parseInt($('wiATPP').value)   || ppDoneWI + 1));
 
-  // Fixed-point: find effectiveBudget where trueUp + budget = annLim
-  let wiEffectiveBudget = annLim;
-  for (let pass = 0; pass < 8; pass++) {
+  // Binary search: find highest wiEffectiveBudget where grand + trueUp <= annLim.
+  // Replaces fixed-point iteration which can oscillate for wage-capped salaries.
+  function wiPassSim(eb) {
     let _cumElec=ytdElec, _cumAT=ytdAT, _cumMatch=ytdMatch;
     for (let pp=ppDoneWI+1; pp<=26; pp++) {
       const g=ppGrossArr[pp-1];
@@ -903,7 +906,7 @@ function runWhatIf() {
       const ppPreWant=(pp>=spPre&&wPre>0)?g*wPre/100:0;
       const ppRothWant=(pp>=spRoth&&wRoth>0)?g*wRoth/100:0;
       const ppATwant=(pp>=spAT&&wAT>0)?g*wAT/100:0;
-      const r415=Math.max(0,wiEffectiveBudget-_cumElec-_cumAT-_cumMatch);
+      const r415=Math.max(0,eb-_cumElec-_cumAT-_cumMatch);
       const ppPre=Math.min(ppPreWant,Math.max(0,electLim-_cumElec),r415);
       const ppRoth=Math.min(ppRothWant,Math.max(0,electLim-_cumElec-ppPre),Math.max(0,r415-ppPre));
       const ppEl=ppPre+ppRoth;
@@ -913,11 +916,16 @@ function runWhatIf() {
       const ppAT=ppATwant>0?Math.min(ppATwant,r4m):0;
       _cumElec+=ppEl; _cumAT+=ppAT; _cumMatch+=ppMt;
     }
-    const _trueUp=Math.max(0,Math.min(_cumElec,maxMatch)-_cumMatch);
-    const newBudget=annLim-_trueUp;
-    if(Math.abs(newBudget-wiEffectiveBudget)<0.01) break;
-    wiEffectiveBudget=newBudget;
+    const tu=Math.max(0,Math.min(_cumElec,maxMatch)-_cumMatch);
+    return _cumElec+_cumAT+_cumMatch+tu;
   }
+  let wiBsLo=0, wiBsHi=annLim;
+  for (let i=0; i<60; i++) {
+    const mid=(wiBsLo+wiBsHi)/2;
+    if(wiPassSim(mid)<=annLim+0.005) wiBsLo=mid; else wiBsHi=mid;
+    if(wiBsHi-wiBsLo<0.005) break;
+  }
+  const wiEffectiveBudget = wiBsLo;
 
   let cumElec = ytdElec, cumPre = 0, cumRoth = 0, cumAT = ytdAT, cumMatch = ytdMatch;
   const rows = [];
