@@ -386,7 +386,7 @@ function calculate() {
   const isCU       = age >= 50;
   const cuAmt      = isSuper ? L.superCU : (isCU ? L.catchUp : 0);
   const electLim   = L.base + cuAmt;
-  const annLim     = isSuper ? L.ann + L.superCU : L.ann;
+  const annLim     = isSuper ? L.ann + L.superCU : (isCU ? L.ann + L.catchUp : L.ann);
   const maxMatch   = eligGross * L.matchPct;
   const ppElig     = eligGross / PP;
 
@@ -872,6 +872,8 @@ function runWhatIf() {
   const eligGross  = parseFloat(d.eliggross);
   const gross      = parseFloat(d.gross);   // total annual incl bonuses
   const isSuper    = d.issuper === '1';
+  const isCU       = d.iscu === '1';
+  const lBase      = parseFloat(d.lbase);
   const ytdElec  = parseFloat(d.ytdelec);
   const ytdAT    = parseFloat(d.ytdat);
   const ytdMatch = parseFloat(d.ytdmatch);
@@ -907,9 +909,15 @@ function runWhatIf() {
       const ppRothWant=(pp>=spRoth&&wRoth>0)?g*wRoth/100:0;
       const ppATwant=(pp>=spAT&&wAT>0)?g*wAT/100:0;
       const r415=Math.max(0,eb-_cumElec-_cumAT-_cumMatch);
-      const ppPre=Math.min(ppPreWant,Math.max(0,electLim-_cumElec),r415);
-      const ppRoth=Math.min(ppRothWant,Math.max(0,electLim-_cumElec-ppPre),Math.max(0,r415-ppPre));
-      const ppEl=ppPre+ppRoth;
+      const _bRP=Math.max(0,lBase-_cumElec);
+      const ppPre=Math.min(ppPreWant,_bRP,r415);
+      let ppPreCU=0;
+      if(isCU&&wPre>0&&_cumElec+ppPre>=lBase-0.01){const cr=Math.max(0,electLim-_cumElec-ppPre);ppPreCU=Math.min(Math.max(0,ppPreWant-ppPre),cr,Math.max(0,r415-ppPre));}
+      const _bRR=Math.max(0,lBase-_cumElec-ppPre-ppPreCU);
+      const ppRoth=Math.min(ppRothWant,_bRR,Math.max(0,r415-ppPre-ppPreCU));
+      let ppRothCU=0;
+      if(isCU&&wRoth>0&&_cumElec+ppPre+ppPreCU+ppRoth>=lBase-0.01){const cr=Math.max(0,electLim-_cumElec-ppPre-ppPreCU-ppRoth);ppRothCU=Math.min(Math.max(0,ppRothWant-ppRoth),cr,Math.max(0,r415-ppPre-ppPreCU-ppRoth));}
+      const ppEl=ppPre+ppPreCU+ppRoth+ppRothCU;
       const r4e=Math.max(0,r415-ppEl);
       const ppMt=Math.min(Math.min(ppEl,ppEligThis*matchPct),Math.max(0,maxMatch-_cumMatch),r4e);
       const r4m=Math.max(0,r4e-ppMt);
@@ -927,13 +935,15 @@ function runWhatIf() {
   }
   const wiEffectiveBudget = wiBsLo;
 
-  let cumElec = ytdElec, cumPre = 0, cumRoth = 0, cumAT = ytdAT, cumMatch = ytdMatch;
+  let cumElec = ytdElec, cumPre = 0, cumPreCU = 0, cumRoth = 0, cumRothCU = 0, cumAT = ytdAT, cumMatch = ytdMatch;
   const rows = [];
 
   if (ppDoneWI > 0) {
     const ytdGross = ppGrossArr.slice(0, ppDoneWI).reduce((a, b) => a + b, 0);
+    const _ytdPre  = parseFloat(d.ytdpre  || 0);
+    const _ytdRoth = parseFloat(d.ytdroth || 0);
     rows.push({ label: 'Periods 1\u2013' + ppDoneWI, past: true,
-      pre: ytdElec, preCU: 0, roth: 0, rothCU: 0,
+      pre: _ytdPre, preCU: 0, roth: _ytdRoth, rothCU: 0,
       at: ytdAT, match: ytdMatch, gross: ytdGross });
   }
 
@@ -947,9 +957,25 @@ function runWhatIf() {
 
     const room415Before = Math.max(0, wiEffectiveBudget - cumElec - cumAT - cumMatch);
 
-    const ppPre  = Math.min(ppPreWant,  Math.max(0, electLim - cumElec),         room415Before);
-    const ppRoth = Math.min(ppRothWant, Math.max(0, electLim - cumElec - ppPre), Math.max(0, room415Before - ppPre));
-    const ppElec = ppPre + ppRoth;
+    // Base pre-tax (up to lBase)
+    const baseRoomPre = Math.max(0, lBase - cumElec);
+    const ppPre = Math.min(ppPreWant, baseRoomPre, room415Before);
+    // Catch-up pre-tax
+    let ppPreCU = 0;
+    if (isCU && wPre > 0 && cumElec + ppPre >= lBase - 0.01) {
+      const cuRoom = Math.max(0, electLim - cumElec - ppPre);
+      ppPreCU = Math.min(Math.max(0, ppPreWant - ppPre), cuRoom, Math.max(0, room415Before - ppPre));
+    }
+    // Base roth
+    const baseRoomRoth = Math.max(0, lBase - cumElec - ppPre - ppPreCU);
+    const ppRoth = Math.min(ppRothWant, baseRoomRoth, Math.max(0, room415Before - ppPre - ppPreCU));
+    // Catch-up roth
+    let ppRothCU = 0;
+    if (isCU && wRoth > 0 && cumElec + ppPre + ppPreCU + ppRoth >= lBase - 0.01) {
+      const cuRoom = Math.max(0, electLim - cumElec - ppPre - ppPreCU - ppRoth);
+      ppRothCU = Math.min(Math.max(0, ppRothWant - ppRoth), cuRoom, Math.max(0, room415Before - ppPre - ppPreCU - ppRoth));
+    }
+    const ppElec = ppPre + ppPreCU + ppRoth + ppRothCU;
 
     const room415AfterElec = Math.max(0, room415Before - ppElec);
     const ppMatch = Math.min(
@@ -961,28 +987,33 @@ function runWhatIf() {
     const room415AfterMatch = Math.max(0, room415AfterElec - ppMatch);
     const ppAT = ppATwant > 0 ? Math.min(ppATwant, room415AfterMatch) : 0;
 
-    cumElec  += ppElec;
-    cumPre   += ppPre;
-    cumRoth  += ppRoth;
-    cumAT    += ppAT;
-    cumMatch += ppMatch;
+    cumElec   += ppElec;
+    cumPre    += ppPre;
+    cumPreCU  += ppPreCU;
+    cumRoth   += ppRoth;
+    cumRothCU += ppRothCU;
+    cumAT     += ppAT;
+    cumMatch  += ppMatch;
 
     const isBonus = (pp === BONUS_APR_PP && bonusApr > 0) || (pp === BONUS_OCT_PP && bonusOct > 0);
     rows.push({ label: 'Period ' + pp, past: false,
-      pre: ppPre, preCU: 0, roth: ppRoth, rothCU: 0,
+      pre: ppPre, preCU: ppPreCU, roth: ppRoth, rothCU: ppRothCU,
       at: ppAT, match: ppMatch, gross: ppGrossThis, isBonus });
   }
 
-  const totElec  = cumElec;
-  const totPre   = cumPre   + (ppDoneWI > 0 ? parseFloat(d.ytdpre  || 0) : 0);
-  const totRoth  = cumRoth  + (ppDoneWI > 0 ? parseFloat(d.ytdroth || 0) : 0);
-  const totMatch = cumMatch;
-  const totAT    = cumAT;
-  const grandTot = totElec + totAT + totMatch;
-  const trueUp   = Math.max(0, Math.min(totElec, maxMatch) - totMatch);
+  const totElec   = cumElec;
+  const totPreCU  = cumPreCU;
+  const totRothCU = cumRothCU;
+  const totPre    = cumPre  + cumPreCU  + (ppDoneWI > 0 ? parseFloat(d.ytdpre  || 0) : 0);
+  const totRoth   = cumRoth + cumRothCU + (ppDoneWI > 0 ? parseFloat(d.ytdroth || 0) : 0);
+  const totMatch  = cumMatch;
+  const totAT     = cumAT;
+  const grandTot  = totElec + totAT + totMatch;
+  const trueUp    = Math.max(0, Math.min(totElec, maxMatch) - totMatch);
 
   const result = buildDynamicHtml({
-    totPreBase: totPre, totPreCU: 0, totRothBase: totRoth, totRothCU: 0,
+    totPreBase: totPre - totPreCU, totPreCU,
+    totRothBase: totRoth - totRothCU, totRothCU,
     totPre, totRoth, totElec, totMatch, totAT, grandTot, trueUp,
     rows, wageCapped, eligGross, gross,
     electLim, annLim, maxMatch, isSuper, isCustom: true
