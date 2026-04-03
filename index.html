@@ -203,17 +203,25 @@
     </div>
     <div class="input-row">
       <div class="form-group">
-        <label>April Bonus ($)</label>
+        <label>Apr Est. Bonus ($)</label>
         <input type="number" id="bonusApr" placeholder="0" min="0" value="">
-        <div class="hint">Added to gross in pay period 7</div>
+        <div class="hint">Added to gross in pay period 8 · also use for Q1/Q2 SIP payments</div>
       </div>
       <div class="form-group">
-        <label>October Bonus ($)</label>
+        <label>Oct Est. Bonus ($)</label>
         <input type="number" id="bonusOct" placeholder="0" min="0" value="">
-        <div class="hint">Added to gross in pay period 20</div>
+        <div class="hint">Added to gross in pay period 21 · also use for Q3/Q4 SIP payments</div>
       </div>
     </div>
     <div id="cuBadge"></div>
+    <div id="secure2Section" style="display:none;margin-top:14px;padding:12px 14px;background:#fdf5ff;border:1.5px solid #d4a8e0;border-radius:9px;">
+      <div style="font-size:0.75rem;font-weight:600;color:#5b2270;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">&#x2696;&#xFE0F; SECURE 2.0 Act &mdash; Roth Catch-Up Requirement</div>
+      <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;text-transform:none;font-size:0.82rem;color:#3a1a4a;font-weight:400;letter-spacing:0;">
+        <input type="checkbox" id="ficaOver150k" style="margin-top:2px;accent-color:#7b2d8b;width:15px;height:15px;flex-shrink:0;">
+        <span>I earned <strong>$150,000 or more</strong> in FICA wages in 2025</span>
+      </label>
+      <div class="hint" style="margin-top:6px;">If checked, your catch-up contributions will be treated as <strong>Roth</strong> (required by law), even if you elect pre-tax. Leave unchecked if you earned under $150k or are unsure &mdash; catch-up contributions will follow your elected type.</div>
+    </div>
     <div class="section-title sec-gap">Pay Period Status</div>
     <div class="input-row">
       <div class="form-group">
@@ -253,12 +261,12 @@
       ⚠️ You've entered year-to-date contributions but <strong>Pay Periods Completed is 0</strong>. Please update it to reflect how many pay periods have passed.
     </div>
     <div class="section-title sec-gap">Savings Goal</div>
-    <div class="hint" style="margin-bottom:10px">Select one or more goals. "Maximize Employer Match" can be combined with either tax goal.</div>
+    <div class="hint" style="margin-bottom:10px">Mix and match freely. Today/Later are mutually exclusive; <strong>Maximize Employer Match</strong> and <strong>Maximize Total Savings</strong> combine with any selection.</div>
     <div class="goal-grid">
       <button class="goal-btn" data-goal="today" onclick="toggleGoal('today')">Reduce<br>Taxes Today<br><span style="font-size:0.69rem;opacity:0.75">Most effective if pre-tax contributions push you into a lower tax bracket</span></button>
       <button class="goal-btn" data-goal="later" onclick="toggleGoal('later')">Reduce<br>Taxes Later<br><span style="font-size:0.69rem;opacity:0.75">Generally more suitable for those with a longer investment time horizon</span></button>
-      <button class="goal-btn" data-goal="match" onclick="toggleGoal('match')" style="grid-column:span 2">Maximize Employer Match<br><span style="font-size:0.69rem;opacity:0.75">Combinable with Reduce Taxes Today or Later</span></button>
-      <button class="goal-btn" data-goal="all" onclick="toggleGoal('all')" style="grid-column:span 2">Maximize Total Savings<br><span style="font-size:0.69rem;opacity:0.75">Fills pre-tax and/or Roth + after-tax up to the 415(c) annual additions limit</span></button>
+      <button class="goal-btn" data-goal="match" onclick="toggleGoal('match')" style="grid-column:span 2">Maximize Employer Match<br><span style="font-size:0.69rem;opacity:0.75">Combines freely with any other goal selection</span></button>
+      <button class="goal-btn" data-goal="all" onclick="toggleGoal('all')" style="grid-column:span 2">Maximize Total Savings<br><span style="font-size:0.69rem;opacity:0.75">Adds after-tax contributions up to the 415(c) limit · combines with any other goal</span></button>
     </div>
     <button class="calc-btn" onclick="calculate()">Calculate My Plan →</button>
   </div>
@@ -300,22 +308,25 @@ const sw  = bg => `<span class="sw" style="background:${bg}"></span>`;
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
 function toggleGoal(g) {
-  if (g === 'all') {
-    goals.has('all') ? goals.clear() : (goals.clear(), goals.add('all'));
-  } else if (g === 'today') {
-    goals.delete('all');
-    goals.has('today') ? goals.delete('today') : (goals.delete('later'), goals.add('today'));
+  // today/later are mutually exclusive; match and all freely combine with either or both
+  if (g === 'today') {
+    if (goals.has('today')) { goals.delete('today'); }
+    else { goals.delete('later'); goals.add('today'); }
   } else if (g === 'later') {
-    goals.delete('all');
-    goals.has('later') ? goals.delete('later') : (goals.delete('today'), goals.add('later'));
-  } else if (g === 'match') {
-    goals.delete('all');
-    goals.has('match') ? goals.delete('match') : goals.add('match');
+    if (goals.has('later')) { goals.delete('later'); }
+    else { goals.delete('today'); goals.add('later'); }
+  } else {
+    // 'match' and 'all' toggle independently
+    goals.has(g) ? goals.delete(g) : goals.add(g);
   }
   document.querySelectorAll('.goal-btn').forEach(b => b.classList.toggle('active', goals.has(b.dataset.goal)));
 }
 
 function updateCUBadge() {
+  const age = parseInt($('age').value) || 0;
+  const isCU = age >= 50;
+  const s2 = $('secure2Section');
+  if (s2) s2.style.display = isCU ? 'block' : 'none';
   $('cuBadge').innerHTML = '';
 }
 
@@ -360,9 +371,9 @@ function calculate() {
   }
 
   // ── Per-period gross array (1-indexed slots 0..25) ───────────────────────────
-  // Bonus pay periods: April ≈ PP7, October ≈ PP20
-  const BONUS_APR_PP = 7;
-  const BONUS_OCT_PP = 20;
+  // Bonus pay periods: April ≈ PP8, October ≈ PP21
+  const BONUS_APR_PP = 8;
+  const BONUS_OCT_PP = 21;
   const basePPGross  = gross / PP;
   const ppGrossArr   = Array.from({length: PP}, (_, i) => {
     let pg = basePPGross;
@@ -386,6 +397,8 @@ function calculate() {
   const isCU       = age >= 50;
   const cuAmt      = isSuper ? L.superCU : (isCU ? L.catchUp : 0);
   const electLim   = L.base + cuAmt;
+  // SECURE 2.0: if user earned 150k+ FICA wages in 2025, catch-up must be Roth
+  const ficaOver150k = isCU && $('ficaOver150k') && $('ficaOver150k').checked;
   const annLim     = isSuper ? L.ann + L.superCU : (isCU ? L.ann + L.catchUp : L.ann);
   const maxMatch   = eligGross * L.matchPct;
   const ppElig     = eligGross / PP;
@@ -404,25 +417,42 @@ function calculate() {
   const wantsAll   = goals.has('all');
 
   // ── Determine annual contribution targets ────────────────────────────────────
+  // Logic matrix:
+  //  today / later   → sets the elective type (pre-tax vs Roth) up to electLim
+  //  match           → if no tax goal selected, caps elective at match threshold;
+  //                    if combined with today/later, elective still goes to electLim (match is implicit)
+  //  all             → always adds after-tax up to 415(c) room;
+  //                    if no tax goal selected, uses age-based split for elective portion
   let tgtPre = 0, tgtRoth = 0, tgtAT = 0;
 
   if (wantsToday) {
+    // Pre-tax to full elective limit
     tgtPre = electLim; tgtRoth = 0;
   } else if (wantsLater) {
+    // Roth to full elective limit
     tgtPre = 0; tgtRoth = electLim;
-  } else if (wantsAll) {
-    // Age-based pre/roth split for elective — same strategy as other goals
-    if (strat === 'roth')   { tgtPre = 0;              tgtRoth = electLim; }
-    else if (strat === 'pretax') { tgtPre = electLim;  tgtRoth = 0; }
-    else                    { tgtPre = electLim / 2;   tgtRoth = electLim / 2; }
-    tgtAT = Math.max(0, annLim - electLim - maxMatch);
-  } else if (wantsMatch) {
-    // Total elective capped exactly at the match threshold — no more.
-    // Age-weighted split: under 40 → all Roth | 40–54 → 60% Roth / 40% Pre-Tax | 55+ → all Pre-Tax
+  } else if (wantsAll && !wantsMatch) {
+    // "Maximize Total Savings" alone → age-based elective split + after-tax
+    if (strat === 'roth')        { tgtPre = 0;             tgtRoth = electLim; }
+    else if (strat === 'pretax') { tgtPre = electLim;      tgtRoth = 0; }
+    else                         { tgtPre = electLim / 2;  tgtRoth = electLim / 2; }
+  } else if (wantsMatch && !wantsAll) {
+    // "Maximize Employer Match" alone → cap elective at match threshold, age-based split
     const matchTarget = eligGross * L.matchPct;
-    if      (strat === 'roth')   { tgtPre = 0;                    tgtRoth = matchTarget; }
-    else if (strat === 'pretax') { tgtPre = matchTarget;           tgtRoth = 0; }
-    else                         { tgtPre = matchTarget * 0.4;     tgtRoth = matchTarget * 0.6; }
+    if      (strat === 'roth')   { tgtPre = 0;               tgtRoth = matchTarget; }
+    else if (strat === 'pretax') { tgtPre = matchTarget;      tgtRoth = 0; }
+    else                         { tgtPre = matchTarget * 0.4; tgtRoth = matchTarget * 0.6; }
+  } else if (wantsMatch && wantsAll) {
+    // Match + All (no tax goal) → age-based elective split + after-tax
+    if (strat === 'roth')        { tgtPre = 0;             tgtRoth = electLim; }
+    else if (strat === 'pretax') { tgtPre = electLim;      tgtRoth = 0; }
+    else                         { tgtPre = electLim / 2;  tgtRoth = electLim / 2; }
+  }
+
+  // "Maximize Total Savings" always adds after-tax to fill 415(c) room,
+  // regardless of which other goals are selected
+  if (wantsAll) {
+    tgtAT = Math.max(0, annLim - electLim - maxMatch);
   }
 
   // ── Whole-number election rates (ceil) ──────────────────────────────────────
@@ -504,13 +534,19 @@ function calculate() {
     const baseRoomForPre = Math.max(0, L.base - cumPre - cumRoth);
     ppPre = Math.min(ppWantPreThis, baseRoomForPre, Math.max(0, tgtPre - cumPre));
 
-    // Step 2: Pre-tax CATCH-UP
+    // Step 2: Pre-tax CATCH-UP (redirected to Roth if SECURE 2.0 applies)
     if (isCU && tgtPre > 0) {
       const baseUsed = cumPre + cumRoth + ppPre;
       if (baseUsed >= L.base - 0.01) {
         const cuRoom    = Math.max(0, electLim - cumPre - cumRoth - ppPre);
         const stillNeed = Math.max(0, ppWantPreThis - ppPre);
-        ppPreCU = Math.min(stillNeed, cuRoom, Math.max(0, tgtPre - cumPre - ppPre));
+        const cuCalc    = Math.min(stillNeed, cuRoom, Math.max(0, tgtPre - cumPre - ppPre));
+        if (ficaOver150k) {
+          // SECURE 2.0: pre-tax catch-up must be Roth — store in ppRothCU instead
+          ppRothCU += cuCalc;
+        } else {
+          ppPreCU = cuCalc;
+        }
       }
     }
 
@@ -522,9 +558,9 @@ function calculate() {
     if (isCU && tgtRoth > 0) {
       const baseUsedNow = cumPre + cumRoth + ppPre + ppPreCU + ppRoth;
       if (baseUsedNow >= L.base - 0.01) {
-        const cuRoom    = Math.max(0, electLim - cumPre - cumRoth - ppPre - ppPreCU - ppRoth);
+        const cuRoom    = Math.max(0, electLim - cumPre - cumRoth - ppPre - ppPreCU - ppRoth - ppRothCU);
         const stillNeed = Math.max(0, ppWantRothThis - ppRoth);
-        ppRothCU = Math.min(stillNeed, cuRoom, Math.max(0, tgtRoth - cumRoth - ppRoth));
+        ppRothCU += Math.min(stillNeed, cuRoom, Math.max(0, tgtRoth - cumRoth - ppRoth));
       }
     }
 
@@ -580,13 +616,20 @@ function calculate() {
   h += `<div id="alertContainer">${buildAlertBanners(isSuper, isCU, cuAmt, electLim, annLim, wageCapped, gross, ppLeft)}</div>`;
 
   let ctxNote = '';
-  if (wantsToday) ctxNote = `Pre-tax contributions may help reduce your taxable income. Based on your inputs, this illustration targets your ${fmt(electLim)} pre-tax + Roth contribution limit for 2026${isCU ? `, including ${fmt(cuAmt)} in ${isSuper?'super ':''}catch-up contributions` : ''}.`;
-  else if (wantsLater) ctxNote = `Roth contributions grow tax-free in retirement. Based on your inputs, this illustration targets your ${fmt(electLim)} pre-tax + Roth contribution limit for 2026${isCU ? `, including ${fmt(cuAmt)} in ${isSuper?'super ':''}catch-up contributions` : ''}.`;
-  else if (wantsAll) {
-    const splitDesc = strat === 'roth' ? 'all Roth (long time horizon — tax-free growth)' : strat === 'pretax' ? 'all Pre-Tax (peak earning years — reduce taxable income now)' : '50/50 Pre-Tax & Roth split (balanced tax diversification)';
-    ctxNote = `Based on your inputs, this illustration targets your full ${fmt(electLim)} pre-tax + Roth contribution limit${isCU ? ` (including ${fmt(cuAmt)} ${isSuper?'super ':''}catch-up)` : ''} as ${splitDesc}${dAT > 0 ? `, plus after-tax contributions toward the ${fmt(annLim)} 415(c) limit` : ''}.`;
+  {
+    const cuNote = isCU ? ` (incl. ${fmt(cuAmt)} ${isSuper?'super ':''}catch-up)` : '';
+    const atNote = dAT > 0 ? `, plus after-tax toward the ${fmt(annLim)} 415(c) limit` : '';
+    const matchNote = wantsMatch ? ` Targeting full employer match of ${fmt(maxMatch)}.` : '';
+    const splitDesc = strat === 'roth' ? 'age-based Roth-first strategy' : strat === 'pretax' ? 'age-based Pre-Tax-first strategy' : 'age-based 50/50 Pre-Tax & Roth split';
+    if (wantsToday) {
+      ctxNote = `Pre-tax contributions targeted to the full ${fmt(electLim)} elective limit${cuNote}${atNote}.${matchNote}`;
+    } else if (wantsLater) {
+      ctxNote = `Roth contributions targeted to the full ${fmt(electLim)} elective limit${cuNote}${atNote}.${matchNote}`;
+    } else if (wantsAll || wantsMatch) {
+      // No explicit tax goal — use age-based split
+      ctxNote = `Elective contributions allocated using the ${splitDesc} up to ${fmt(electLim)}${cuNote}${atNote}.${matchNote}`;
+    }
   }
-  else if (wantsMatch) ctxNote = `Contributing ${dPre + dRoth}% may be sufficient to receive your full employer match of ${fmt(maxMatch)} for 2026. Verify the match formula with your plan documents.`;
 
   const megaNote = dAT > 0 ? `<div style="margin-top:10px;padding:8px 12px;background:#faf5ff;border-left:3px solid #a855f7;border-radius:7px;font-size:0.79rem;color:#4c1d95;">
     💜 <strong>Mega Backdoor Roth opportunity:</strong> Consider converting after-tax contributions to Roth via a Roth In-Plan Conversion.
@@ -1074,6 +1117,95 @@ function resetResults() {
 }
 
 updatePP();
+</script>
+
+<!-- FEEDBACK BAR -->
+<div id="feedbackBar" style="background:var(--navy-mid);border-top:2px solid var(--gold);padding:18px 40px 22px;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+  <div style="flex:1;min-width:220px;">
+    <div style="font-family:'DM Serif Display',serif;color:var(--gold-light);font-size:0.95rem;margin-bottom:4px;">Share Your Feedback</div>
+    <div style="font-size:0.72rem;color:#7a93ae;line-height:1.5;">Optional · takes 10 seconds · helps improve this tool</div>
+  </div>
+  <div style="flex:3;min-width:260px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <textarea id="feedbackText" maxlength="300" placeholder="What worked well, what was confusing, or what would you add?" rows="2"
+      style="flex:1;min-width:200px;padding:9px 12px;border:1.5px solid #2a4a6a;border-radius:7px;background:#0f1e35;color:#d0dce8;font-family:'DM Sans',sans-serif;font-size:0.82rem;resize:vertical;outline:none;line-height:1.5;"
+      onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='#2a4a6a'"></textarea>
+    <button onclick="submitFeedback()" style="padding:9px 20px;background:var(--gold);color:var(--navy);border:none;border-radius:7px;font-family:'DM Serif Display',serif;font-size:0.9rem;cursor:pointer;white-space:nowrap;transition:background 0.18s;" onmouseover="this.style.background='var(--gold-light)'" onmouseout="this.style.background='var(--gold)'">Send →</button>
+  </div>
+  <div id="feedbackConfirm" style="display:none;flex-basis:100%;padding:7px 12px;background:#1a3a2a;border-left:3px solid #10b981;border-radius:6px;font-size:0.78rem;color:#6ee7b7;">✅ Thanks for your feedback!</div>
+</div>
+
+<script>
+function submitFeedback() {
+  const txt = document.getElementById('feedbackText').value.trim();
+  if (!txt) { document.getElementById('feedbackText').focus(); return; }
+
+  // ── Gather inputs ──────────────────────────────────────────────────────────
+  const age      = document.getElementById('age').value || 'Not entered';
+  const gross    = document.getElementById('gross').value ? '$' + parseFloat(document.getElementById('gross').value).toLocaleString() : 'Not entered';
+  const bonusApr = document.getElementById('bonusApr').value ? '$' + parseFloat(document.getElementById('bonusApr').value).toLocaleString() : '—';
+  const bonusOct = document.getElementById('bonusOct').value ? '$' + parseFloat(document.getElementById('bonusOct').value).toLocaleString() : '—';
+  const ppDone   = document.getElementById('ppDone').value || '0';
+  const ppLeft   = document.getElementById('ppLeft').value || '—';
+  const ytdPre   = document.getElementById('ytdPre').value   ? '$' + parseFloat(document.getElementById('ytdPre').value).toLocaleString()   : '—';
+  const ytdRoth  = document.getElementById('ytdRoth').value  ? '$' + parseFloat(document.getElementById('ytdRoth').value).toLocaleString()  : '—';
+  const ytdAT    = document.getElementById('ytdAT').value    ? '$' + parseFloat(document.getElementById('ytdAT').value).toLocaleString()    : '—';
+  const ytdMatch = document.getElementById('ytdMatch').value ? '$' + parseFloat(document.getElementById('ytdMatch').value).toLocaleString() : '—';
+  const ficaEl   = document.getElementById('ficaOver150k');
+  const fica     = ficaEl && ficaEl.offsetParent !== null ? (ficaEl.checked ? 'Yes (catch-up → Roth)' : 'No / Unknown') : 'N/A (not catch-up eligible)';
+
+  const activeGoals = Array.from(document.querySelectorAll('.goal-btn.active'))
+    .map(b => b.dataset.goal === 'today' ? 'Reduce Taxes Today'
+            : b.dataset.goal === 'later' ? 'Reduce Taxes Later'
+            : b.dataset.goal === 'match' ? 'Maximize Employer Match'
+            : 'Maximize Total Savings').join(', ') || 'None selected';
+
+  // ── Gather results (from rendered what-if rate inputs and totals row) ──────
+  const wiPre  = document.getElementById('wiPre')  ? (document.getElementById('wiPre').value  || '—') + '%' : '—';
+  const wiRoth = document.getElementById('wiRoth') ? (document.getElementById('wiRoth').value || '—') + '%' : '—';
+  const wiAT   = document.getElementById('wiAT')   ? (document.getElementById('wiAT').value   || '—') + '%' : '—';
+
+  // Scrape the totals row (navy background row) from the pay period table
+  let totals = 'Not yet calculated — no results generated.';
+  const totRow = document.querySelector('tbody tr.tot');
+  if (totRow) {
+    const cells = totRow.querySelectorAll('td');
+    const labels = ['Period', 'Pre-Tax', 'Roth', 'After-Tax', 'Match', 'Gross'];
+    const vals = Array.from(cells).map((c, i) => (labels[i] || 'Col ' + i) + ': ' + c.innerText.trim());
+    totals = vals.join('  |  ');
+  }
+
+  // ── Compose email body ─────────────────────────────────────────────────────
+  const body =
+    '=== 401(k) CONTRIBUTION PLANNER FEEDBACK ===' +
+    '\r\n\r\nFeedback:\r\n' + txt +
+    '\r\n\r\n--- INPUTS ---' +
+    '\r\nAge: ' + age +
+    '\r\nEst. Annual Gross: ' + gross +
+    '\r\nApr Est. Bonus: ' + bonusApr +
+    '\r\nOct Est. Bonus: ' + bonusOct +
+    '\r\nPay Periods Completed / Remaining: ' + ppDone + ' / ' + ppLeft +
+    '\r\nYTD Pre-Tax: ' + ytdPre +
+    '\r\nYTD Roth: ' + ytdRoth +
+    '\r\nYTD After-Tax: ' + ytdAT +
+    '\r\nYTD Match: ' + ytdMatch +
+    '\r\nSavings Goals: ' + activeGoals +
+    '\r\n\r\n--- CONTRIBUTION RATES ---' +
+    '\r\nPre-Tax Rate: ' + wiPre +
+    '\r\nRoth Rate: ' + wiRoth +
+    '\r\nAfter-Tax Rate: ' + wiAT +
+    '\r\n\r\n--- PROJECTED TOTALS ---' +
+    '\r\n' + totals +
+    '\r\n\r\n[Sent from NXP 401(k) Contribution Planner · 2026]';
+
+  window.location.href = 'mailto:usbenefits.office@nxp.com'
+    + '?subject=' + encodeURIComponent('401(k) Planner Feedback')
+    + '&body='    + encodeURIComponent(body);
+
+  document.getElementById('feedbackText').value = '';
+  const confirm = document.getElementById('feedbackConfirm');
+  confirm.style.display = 'block';
+  setTimeout(() => { confirm.style.display = 'none'; }, 4000);
+}
 </script>
 </body>
 </html>
