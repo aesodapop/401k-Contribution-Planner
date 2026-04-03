@@ -14,11 +14,11 @@
     --border:#dde3ec;--shadow:0 4px 24px rgba(15,30,53,0.10);
   }
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text);min-height:100vh;}
-  header{background:var(--navy);color:white;padding:26px 40px 22px;display:flex;align-items:flex-end;gap:18px;border-bottom:3px solid var(--gold);}
+  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text);min-height:100vh;overflow-x:hidden;width:100%;}
+  header{background:var(--navy);color:white;padding:26px 40px 22px;display:flex;align-items:flex-end;gap:18px;border-bottom:3px solid var(--gold);width:100%;box-sizing:border-box;}
   header h1{font-family:'DM Serif Display',serif;font-size:2rem;line-height:1;letter-spacing:-0.5px;}
   header h1 span{color:var(--gold);}
-  .limits-bar{background:var(--navy-mid);color:#a8bcd0;font-size:0.74rem;padding:8px 40px;display:flex;gap:24px;flex-wrap:wrap;}
+  .limits-bar{background:var(--navy-mid);color:#a8bcd0;font-size:0.74rem;padding:8px 40px;display:flex;gap:24px;flex-wrap:wrap;width:100%;box-sizing:border-box;}
   .limits-bar strong{color:var(--gold-light);}
   .layout{display:grid;grid-template-columns:390px 1fr;gap:0;min-height:calc(100vh - 128px);}
   .panel-left{background:white;border-right:1px solid var(--border);padding:26px 26px 44px;overflow-y:auto;}
@@ -127,13 +127,17 @@
   .btn.pri{background:var(--navy);color:white;border-color:var(--navy);}
   .btn.pri:hover{background:var(--navy-light);border-color:var(--gold);}
   .whatif-wrap{margin-bottom:22px;}
+  .mobile-section-divider{display:none;}
   input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
 
   /* ── TABLET (≤900px) ──────────────────────────────────────────────────────── */
   @media (max-width: 900px) {
     .layout{grid-template-columns:1fr;}
-    .panel-left{border-right:none;border-bottom:1px solid var(--border);overflow-y:visible;padding:22px 20px 32px;}
+    .panel-left{border-right:none;border-bottom:4px solid var(--gold);overflow-y:visible;padding:22px 20px 32px;}
+    .mobile-section-divider{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--navy);color:var(--gold-light);font-family:'DM Serif Display',serif;font-size:0.92rem;letter-spacing:0.4px;}
+    .mobile-section-divider::before,.mobile-section-divider::after{content:'';flex:1;height:1px;background:var(--gold);opacity:0.4;}
     .panel-right{overflow-y:visible;padding:22px 20px 40px;}
+
     header{padding:18px 20px 16px;}
     header h1{font-size:1.6rem;}
     .limits-bar{padding:8px 20px;gap:14px;}
@@ -345,6 +349,7 @@
     <button class="calc-btn" onclick="calculate()">Calculate My Plan →</button>
   </div>
   <!-- RIGHT PANEL -->
+  <div class="mobile-section-divider">Your Results</div>
   <div class="panel-right" id="out">
     <div class="placeholder">
       <div class="ico">📊</div>
@@ -1194,7 +1199,7 @@ updatePP();
 </script>
 
 <!-- FEEDBACK BAR -->
-<div id="feedbackBar" style="background:var(--navy-mid);border-top:2px solid var(--gold);padding:18px 40px 22px;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+<div id="feedbackBar" style="background:var(--navy-mid);border-top:2px solid var(--gold);padding:18px 40px 22px;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;width:100%;box-sizing:border-box;">
   <div style="flex:1;min-width:220px;">
     <div style="font-family:'DM Serif Display',serif;color:var(--gold-light);font-size:0.95rem;margin-bottom:4px;">Share Your Feedback</div>
     <div style="font-size:0.72rem;color:#7a93ae;line-height:1.5;">Optional · takes 10 seconds · helps improve this tool</div>
